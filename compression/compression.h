@@ -8,7 +8,7 @@
 namespace compression {
 
 using TSType = std::uint64_t;
-using ValType = double;
+using ValType = float;
 
 extern const int kMaxTimeLengthOfBlockSecs;
 
@@ -35,6 +35,8 @@ ValType last_val_;
 
 // The actual encrypted data and its offset if the bits are not aligned perfectly from the end. 
 int data_end_offset_;
+// TODO: make it private
+public:
 std::vector<std::uint8_t> data_;
 
 };

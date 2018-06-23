@@ -1,6 +1,7 @@
 
 #include <vector>
 #include <utility>
+#include <iostream>
 #include "compression.h"
 
 
@@ -21,8 +22,17 @@ void Encoder::Append(TSType timestamp, ValType val) {
 }
 
 std::vector<std::pair<TSType, ValType>> Encoder::Decode() {
+    auto data_ = blocks_[0]->data_;
 
-    return std::vector<std::pair<TSType, ValType>>();
+    TSType timestamp = 0;
+    for (int i = 0; i < 4; i++) {
+        timestamp |= (data_[i] << i * 8);
+    }
+
+    std::uint8_t data[4];
+    std::copy(data_.begin() + 4, data_.begin() + 8, data);
+    ValType val = *reinterpret_cast<ValType*>(&data);
+    return std::vector<std::pair<TSType, ValType>>{ {timestamp, val}};
 }
 
 bool EncodedDataBlock::WithinRange(TSType timestamp) {
@@ -33,12 +43,45 @@ void EncodedDataBlock::Append(TSType timestamp, ValType val) {
 
 }
 
+// Helper function to print bit values.
+void PrintHex(std::vector<std::uint8_t> data) {
+     std::cout << "Values in hex:\n";
+    for (auto d: data) {
+        std::cout << std::hex << (int)d << "\n";
+    }
+    std::cout << "\n";
+}
+
+TSType AlignTS(TSType timestamp) {
+    // 2h blocks aligned to epoch.
+    return timestamp - (timestamp % (2 * 60 * 60));
+}
+
+
 EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
  last_ts_(timestamp), last_val_(val) {
     // Align timestamp to the epoch and figure out what the delta is.
+    auto aligned_ts = AlignTS(timestamp);
+    auto delta = timestamp - aligned_ts;
+    last_ts_delta_ = delta;
+    last_ts_ = timestamp;
     // store the last delta.
     // Encode stuff correctly.
-    // Set up offset end of encoded data.
+
+    std::uint8_t mask = 0xFF;
+    for (int i = 0; i < 4; i++) {
+        data_.push_back((mask & (aligned_ts >> i * 8)));
+    }
+
+    // TODO here and in decode 14 bits of delta for the timestamp.
+
+    // Encoding of the double, that still needs to be a bit shifted...
+    const std::uint8_t *c = reinterpret_cast<std::uint8_t *>(&val);
+    for (int i = 0; i < 4; i++) {
+        data_.push_back(c[i]);
+    }
+    // to be continued.
 }
 
-}
+
+} // namespace compression
