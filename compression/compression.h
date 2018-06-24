@@ -23,6 +23,8 @@ bool WithinRange(TSType timestamp);
 
 void Append(TSType timestamp, ValType val);
 
+std::vector<std::pair<TSType, ValType>> Decode();
+
 private:
 
 // start_ts_ is necessary to check if the next value fits within the block.
@@ -35,8 +37,6 @@ ValType last_val_;
 
 // The actual encrypted data and its offset if the bits are not aligned perfectly from the end. 
 int data_end_offset_;
-// TODO: make it private
-public:
 std::vector<std::uint8_t> data_;
 
 };
