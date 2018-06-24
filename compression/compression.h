@@ -8,7 +8,7 @@
 namespace compression {
 
 using TSType = std::uint64_t;
-using ValType = float;
+using ValType = double;
 
 extern const int kMaxTimeLengthOfBlockSecs;
 

@@ -24,13 +24,15 @@ void Encoder::Append(TSType timestamp, ValType val) {
 std::vector<std::pair<TSType, ValType>> Encoder::Decode() {
     auto data_ = blocks_[0]->data_;
 
+    int offset = sizeof(TSType);
+    std::cout << "Offset size: " << offset << "\n";
     TSType timestamp = 0;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < offset; i++) {
         timestamp |= (data_[i] << i * 8);
     }
 
-    std::uint8_t data[4];
-    std::copy(data_.begin() + 4, data_.begin() + 8, data);
+    std::uint8_t data[sizeof(ValType)];
+    std::copy(data_.begin() + offset, data_.begin() + offset + (int)sizeof(ValType), data);
     ValType val = *reinterpret_cast<ValType*>(&data);
     return std::vector<std::pair<TSType, ValType>>{ {timestamp, val}};
 }
@@ -69,7 +71,7 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
     // Encode stuff correctly.
 
     std::uint8_t mask = 0xFF;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < (int)sizeof(TSType); i++) {
         data_.push_back((mask & (aligned_ts >> i * 8)));
     }
 
@@ -77,7 +79,7 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
 
     // Encoding of the double, that still needs to be a bit shifted...
     const std::uint8_t *c = reinterpret_cast<std::uint8_t *>(&val);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < (int)sizeof(ValType); i++) {
         data_.push_back(c[i]);
     }
     // to be continued.
