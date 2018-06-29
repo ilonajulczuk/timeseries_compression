@@ -27,7 +27,7 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
  last_ts_(timestamp), last_val_(val) {
     // Align timestamp to the epoch and figure out what the delta is.
     auto aligned_ts = AlignTS(timestamp);
-    auto delta = timestamp - aligned_ts;
+    std::uint16_t delta = timestamp - aligned_ts;
     last_ts_delta_ = delta;
     last_ts_ = timestamp;
     start_ts_ = aligned_ts;
@@ -39,9 +39,12 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
         data_.push_back((mask & (aligned_ts >> i * 8)));
     }
 
-    // TODO here and in decode 14 bits of delta for the timestamp.
+    // Paper says 14 bits, but, 2 bits of a difference and lack of
+    // need for shifting everything sounds like an advantage to me.
+    for (int i = 0; i < 2; i++) {
+        data_.push_back((mask & (delta >> i * 8)));
+    }
 
-    // Encoding of the double, that still needs to be a bit shifted...
     const std::uint8_t *c = reinterpret_cast<std::uint8_t *>(&val);
     for (int i = 0; i < (int)sizeof(ValType); i++) {
         data_.push_back(c[i]);
@@ -50,16 +53,21 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
 }
 
 std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
-    int offset = sizeof(TSType);
-    TSType timestamp = 0;
-    for (int i = 0; i < offset; i++) {
-        timestamp |= (data_[i] << i * 8);
+    int ts_size = sizeof(TSType);
+    TSType aligned_timestamp = 0;
+    for (int i = 0; i < ts_size; i++) {
+        aligned_timestamp |= (data_[i] << i * 8);
     }
-
+    int delta_size = 2;
+    std::uint16_t delta = 0;
+    for (int i = ts_size; i < ts_size + delta_size; i++) {
+        delta |= (data_[i] << i * 8);
+    }
+    int offset = ts_size + delta_size;
     std::uint8_t data[sizeof(ValType)];
     std::copy(data_.begin() + offset, data_.begin() + offset + (int)sizeof(ValType), data);
     ValType val = *reinterpret_cast<ValType*>(&data);
-    return std::vector<std::pair<TSType, ValType>>{ {timestamp, val}};
+    return std::vector<std::pair<TSType, ValType>>{ {aligned_timestamp + delta, val}};
 }
 
 void Encoder::Append(TSType timestamp, ValType val) {
@@ -90,5 +98,8 @@ bool EncodedDataBlock::WithinRange(TSType timestamp) {
 void EncodedDataBlock::Append(TSType timestamp, ValType val) {
 
 }
+
+// Encoding aligned. And later shifting across bytes.
+
 
 } // namespace compression
