@@ -133,26 +133,26 @@ void EncodedDataBlock::Append(TSType timestamp, ValType val) {
     std::cout << "Delta of delta " << delta_of_delta << "\n";
     std::uint32_t mask;
     std::uint64_t output = 0;
+    std::uint64_t encoding = 0;
     if (delta_of_delta == 0) {
-        auto encoding = 0b0;
         number_of_bits = 1;
     } else if (delta_of_delta >= -63 && delta_of_delta <= 64) {
-        auto encoding = 0b10;
+        encoding = 0b10;
         mask = 0b1111111;
         output = encoding << 7 | (delta_of_delta & mask);
         number_of_bits = 9;
     } else if (delta_of_delta >= -255 && delta_of_delta <= 256) {
-        auto encoding = 0b110;
+        encoding = 0b110;
         mask = 0b111111111;
         output = encoding << 9 | (delta_of_delta & mask);
         number_of_bits = 12;
     } else if (delta_of_delta >= -2047 && delta_of_delta <= 2048) {
-        auto encoding = 0b1110;
+        encoding = 0b1110;
         mask = 0b111111111111;
         output = encoding << 12 | (delta_of_delta & mask);
         number_of_bits = 16;
     } else {
-        auto encoding = 0b1111;
+        encoding = 0b1111;
         mask = 0xFFFFFFFF;
         output = encoding << 32 | (delta_of_delta & mask);
         number_of_bits = 32 + 4;
