@@ -5,18 +5,45 @@
 TEST(CompressionTest, CountOfEncodedElements) {
   compression::Encoder encoder{};
   encoder.Append(2 * 60 * 60 + 5, 6.66);
-  encoder.Append(2 * 60 * 60 + 6, 7.66);
-  encoder.Append(2 * 60 * 60 + 7, 8.66);
+  encoder.PrintBinData();
+  encoder.Append(2 * 60 * 60 + 11, 7.66);
+  encoder.PrintBinData();
+  encoder.Append(2 * 60 * 60 + 13, 8.66);
+  encoder.PrintBinData();
+  encoder.Append(2 * 60 * 60 + 313, 8.66);
+  encoder.PrintBinData();
+  encoder.Append(2 * 60 * 60 + 613, 8.66);
+  encoder.PrintBinData();
   auto ts_data = encoder.Decode();
   EXPECT_EQ(3U, ts_data.size());
   EXPECT_EQ(2 * 60 * 60 + 5U, ts_data[0].first);
   EXPECT_FLOAT_EQ(6.66, ts_data[0].second);
-  EXPECT_EQ(2 * 60 * 60 + 6U, ts_data[1].first);
+  EXPECT_EQ(2 * 60 * 60 + 11U, ts_data[1].first);
   EXPECT_FLOAT_EQ(7.66, ts_data[1].second);
+  encoder.PrintBinData();
 }
 
-TEST(CompressionTest, TestEncodingDecodingDeltasOfDeltas) {
-  // Test cases:
-  // TODO...
+TEST(BitAppend, TestIfAppendingBitsWorksCorrectly) {
+  int bit_offset = 3;
+  std::uint8_t initial_byte = 0b11100000;
+  std::uint64_t value = 0b100000011;
+  int number_of_bits = 9;
+  auto output_pair = compression::BitAppend(bit_offset, number_of_bits, value, initial_byte);
+  EXPECT_EQ(4, output_pair.second);
+  compression::PrintBin(output_pair.first);
+  std::vector<std::uint8_t> expected_vec {0b11110000, 0b00110000};
+  EXPECT_EQ(expected_vec, output_pair.first);
+}
 
+TEST(BitAppend, TestIfAppendingBitsZeroOffset) {
+  int bit_offset = 0;
+  std::uint8_t initial_byte = 0;
+  std::uint64_t value = 0b100000011;
+
+  int number_of_bits = 9;
+  auto output_pair = compression::BitAppend(bit_offset, number_of_bits, value, initial_byte);
+  EXPECT_EQ(1, output_pair.second);
+  compression::PrintBin(output_pair.first);
+  std::vector<std::uint8_t> expected_vec {0b10000001, 0b10000000};
+  EXPECT_EQ(expected_vec, output_pair.first);
 }

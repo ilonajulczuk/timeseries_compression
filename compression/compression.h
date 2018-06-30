@@ -12,6 +12,11 @@ using ValType = double;
 
 extern const int kMaxTimeLengthOfBlockSecs;
 
+std::pair<std::vector<std::uint8_t>, int> BitAppend(
+    int bit_offset, int number_of_bits, std::uint64_t value, std::uint8_t initial_byte);
+
+
+void PrintBin(std::vector<std::uint8_t> data);
 // TODO: figure out how to handle failures, either exceptions or status codes?
 class EncodedDataBlock {
 
@@ -24,6 +29,9 @@ bool WithinRange(TSType timestamp);
 void Append(TSType timestamp, ValType val);
 
 std::vector<std::pair<TSType, ValType>> Decode();
+void PrintBinData() {
+    PrintBin(data_);
+}
 
 private:
 
@@ -51,6 +59,11 @@ void Append(TSType timestamp, ValType val);
 std::vector<std::pair<TSType, ValType>> Decode();
 // Iterators to easily iterate over the data?
 
+void PrintBinData() {
+    for (auto b: blocks_) {
+        b->PrintBinData();
+    }
+}
 private:
 EncodedDataBlock* StartNewBlock(TSType timestamp, ValType val) {
     return new EncodedDataBlock(timestamp, val);

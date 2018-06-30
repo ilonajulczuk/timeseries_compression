@@ -3,6 +3,7 @@
 #include <utility>
 #include <iostream>
 #include "compression.h"
+#include <bitset>
 
 
 namespace compression {
@@ -14,6 +15,14 @@ void PrintHex(std::vector<std::uint8_t> data) {
     std::cout << "Values in hex:\n";
     for (auto d: data) {
         std::cout << std::hex << (int)d << "\n";
+    }
+    std::cout << "\n";
+}
+
+void PrintBin(std::vector<std::uint8_t> data) {
+    std::cout << "Values in binary:\n";
+    for (auto d: data) {
+        std::cout << std::bitset<8>(d) << "\n";
     }
     std::cout << "\n";
 }
@@ -36,13 +45,13 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
 
     std::uint8_t mask = 0xFF;
     for (int i = 0; i < (int)sizeof(TSType); i++) {
-        data_.push_back((mask & (aligned_ts >> i * 8)));
+        data_.push_back((mask & (aligned_ts >> ((int)sizeof(TSType) - i - 1) * 8)));
     }
 
     // Paper says 14 bits, but, 2 bits of a difference and lack of
     // need for shifting everything sounds like an advantage to me.
     for (int i = 0; i < 2; i++) {
-        data_.push_back((mask & (delta >> i * 8)));
+        data_.push_back((mask & (delta >> (2 - i - 1) * 8)));
     }
 
     const std::uint8_t *c = reinterpret_cast<std::uint8_t *>(&val);
@@ -56,18 +65,19 @@ std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
     int ts_size = sizeof(TSType);
     TSType aligned_timestamp = 0;
     for (int i = 0; i < ts_size; i++) {
-        aligned_timestamp |= (data_[i] << i * 8);
+        aligned_timestamp |= (data_[i] << (ts_size - 1 - i) * 8);
     }
     int delta_size = 2;
     std::uint16_t delta = 0;
     for (int i = ts_size; i < ts_size + delta_size; i++) {
-        delta |= (data_[i] << i * 8);
+        delta |= (data_[i] << (2 - 1 - i) * 8);
     }
     int offset = ts_size + delta_size;
     std::uint8_t data[sizeof(ValType)];
     std::copy(data_.begin() + offset, data_.begin() + offset + (int)sizeof(ValType), data);
     ValType val = *reinterpret_cast<ValType*>(&data);
-    return std::vector<std::pair<TSType, ValType>>{ {aligned_timestamp + delta, val}};
+    std::vector<std::pair<TSType, ValType>> unpacked{{aligned_timestamp + delta, val}};
+    return unpacked;
 }
 
 void Encoder::Append(TSType timestamp, ValType val) {
@@ -95,8 +105,67 @@ bool EncodedDataBlock::WithinRange(TSType timestamp) {
     return timestamp - start_ts_ < kMaxTimeLengthOfBlockSecs;
 }
 
-void EncodedDataBlock::Append(TSType timestamp, ValType val) {
+std::pair<std::vector<std::uint8_t>, int> BitAppend(int bit_offset, int number_of_bits, std::uint64_t value, std::uint8_t initial_byte) {
+    std::vector<std::uint8_t> output;
+    std::uint8_t byte = initial_byte;
+    while (number_of_bits > 0) {
+        int offset = number_of_bits - 8 + bit_offset;
+        if (offset > 0) {
+            byte |= (value >> offset) & 0xFF;
+        } else {
+            byte |= (value << -offset) & 0xFF;
+        }
+        output.push_back(byte);
+        number_of_bits -= (8 - bit_offset);
+        byte = 0;
+        bit_offset = 0;
+    }
+    bit_offset = (8 + number_of_bits) % 8;
+    return {output, bit_offset};
+}
 
+void EncodedDataBlock::Append(TSType timestamp, ValType val) {
+    int delta = timestamp - last_ts_;
+    int delta_of_delta = delta - last_ts_delta_;
+    last_ts_delta_ = delta;
+    last_ts_ = timestamp;
+    int number_of_bits;
+    std::cout << "Delta of delta " << delta_of_delta << "\n";
+    std::uint32_t mask;
+    std::uint64_t output = 0;
+    if (delta_of_delta == 0) {
+        auto encoding = 0b0;
+        number_of_bits = 1;
+    } else if (delta_of_delta >= -63 && delta_of_delta <= 64) {
+        auto encoding = 0b10;
+        mask = 0b1111111;
+        output = encoding << 7 | (delta_of_delta & mask);
+        number_of_bits = 9;
+    } else if (delta_of_delta >= -255 && delta_of_delta <= 256) {
+        auto encoding = 0b110;
+        mask = 0b111111111;
+        output = encoding << 9 | (delta_of_delta & mask);
+        number_of_bits = 12;
+    } else if (delta_of_delta >= -2047 && delta_of_delta <= 2048) {
+        auto encoding = 0b1110;
+        mask = 0b111111111111;
+        output = encoding << 12 | (delta_of_delta & mask);
+        number_of_bits = 16;
+    } else {
+        auto encoding = 0b1111;
+        mask = 0xFFFFFFFF;
+        output = encoding << 32 | (delta_of_delta & mask);
+        number_of_bits = 32 + 4;
+    }
+    std::uint8_t initial_byte = 0;
+    if (data_end_offset_ > 0) {
+        initial_byte = data_.back();
+        data_.pop_back();
+    }
+    std::cout << "Val to be appended " << std::bitset<64>(output) << "\n";
+    auto output_pair = BitAppend(data_end_offset_, number_of_bits, output, initial_byte);
+    data_.insert(data_.end(), output_pair.first.begin(), output_pair.first.end());
+    data_end_offset_ = output_pair.second;
 }
 
 // Encoding aligned. And later shifting across bytes.
