@@ -14,12 +14,23 @@ TEST(CompressionTest, CountOfEncodedElements) {
   encoder.PrintBinData();
   encoder.Append(2 * 60 * 60 + 613, 8.66);
   encoder.PrintBinData();
+  encoder.Append(2 * 60 * 60 + 713, 8.66);
+  encoder.PrintBinData();
+  encoder.Append(2 * 60 * 60 + 816, 8.66);
+  encoder.PrintBinData();
+  encoder.Append(2 * 60 * 60 + 913, 8.66);
   auto ts_data = encoder.Decode();
-  EXPECT_EQ(3U, ts_data.size());
+  EXPECT_EQ(8U, ts_data.size());
   EXPECT_EQ(2 * 60 * 60 + 5U, ts_data[0].first);
-  EXPECT_FLOAT_EQ(6.66, ts_data[0].second);
+  //EXPECT_FLOAT_EQ(6.66, ts_data[0].second);
   EXPECT_EQ(2 * 60 * 60 + 11U, ts_data[1].first);
-  EXPECT_FLOAT_EQ(7.66, ts_data[1].second);
+  //EXPECT_FLOAT_EQ(7.66, ts_data[1].second);
+  EXPECT_EQ(2 * 60 * 60 + 13U, ts_data[2].first);
+  EXPECT_EQ(2 * 60 * 60 + 313U, ts_data[3].first);
+  EXPECT_EQ(2 * 60 * 60 + 613U, ts_data[4].first);
+  EXPECT_EQ(2 * 60 * 60 + 713U, ts_data[5].first);
+  EXPECT_EQ(2 * 60 * 60 + 816U, ts_data[6].first);
+  EXPECT_EQ(2 * 60 * 60 + 913U, ts_data[7].first);
   encoder.PrintBinData();
 }
 

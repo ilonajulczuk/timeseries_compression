@@ -4,6 +4,7 @@
 #include <iostream>
 #include "compression.h"
 #include <bitset>
+#include <map>
 
 
 namespace compression {
@@ -58,8 +59,13 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
     for (int i = 0; i < (int)sizeof(ValType); i++) {
         data_.push_back(c[i]);
     }
-    // to be continued.
 }
+
+
+std::uint8_t TailMask(int tail_size) {
+    return 0xFF >> (8 - tail_size);
+}
+
 
 std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
     int ts_size = sizeof(TSType);
@@ -77,6 +83,103 @@ std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
     std::copy(data_.begin() + offset, data_.begin() + offset + (int)sizeof(ValType), data);
     ValType val = *reinterpret_cast<ValType*>(&data);
     std::vector<std::pair<TSType, ValType>> unpacked{{aligned_timestamp + delta, val}};
+    offset += (int)sizeof(ValType);
+
+    int last_delta = delta;
+    TSType last_timestamp = aligned_timestamp + delta;
+    // I should be alternating now between timestamps and values.
+    // Values are not encoded yet, so I will assume zeros.
+    unsigned int byte_offset = offset;
+    int bit_offset = 0;
+
+    std::map<int, int> len_to_sequence = {
+        {1, 0b0},
+        {2, 0b10},
+        {3, 0b110},
+        {4, 0b1110},
+        {4, 0b1111}
+    };
+
+    std::map<int, int> sequence_to_num_bits = {
+        {0b0, 0},
+        {0b10, 7},
+        {0b110, 9},
+        {0b1110, 12},
+        {0b1111, 32}
+    };
+
+    while (byte_offset < data_.size()) {
+        std::cout << "Byte offset: " << byte_offset << ", bit offset: " << bit_offset << "\n";
+        std::cout << "Current byte: " << std::bitset<8>(data_[byte_offset]) << "\n";
+
+        if ((byte_offset == data_.size() - 1) && bit_offset >= data_end_offset_) {
+            break;
+        }
+
+        for (auto p: len_to_sequence) {
+            auto len_of_sequence = p.first;
+            auto sequence = p.second;
+            int shift = 8 - len_of_sequence - bit_offset;
+            int number = 0;
+            if (shift > 0) { // no caryover!
+                std::cout << "No carryover\n";
+                number = data_[byte_offset] >> shift & TailMask(len_of_sequence);
+            } else {
+                std::cout << "Carryover\n";
+                if (byte_offset + 1 >= data_.size()) {
+                    break;
+                }
+                number = (data_[byte_offset] & TailMask(len_of_sequence + shift)) << -shift;
+                int carry_shift = 8 - len_of_sequence;
+                int carry_over_number = (data_[byte_offset + 1] >> carry_shift) & TailMask(-shift);
+                number += carry_over_number;
+            }
+            if (number == sequence) {
+                std::cout << "Matched the sequence: " << sequence << "\n";
+                bit_offset += len_of_sequence;
+                if (bit_offset > 7) {
+                    bit_offset -= 8;
+                    byte_offset += 1;
+                }
+                std::int64_t encoded_delta_of_delta = 0;
+                int num_bits = sequence_to_num_bits[sequence];
+                int num_bits_outstanding = num_bits;
+                while(byte_offset < data_.size() && num_bits_outstanding > 0) {
+                    shift = 8 - num_bits_outstanding - bit_offset;
+                    if (shift > 0) { // no caryover!
+                        encoded_delta_of_delta += data_[byte_offset] >> shift & TailMask(num_bits_outstanding);
+                        bit_offset += num_bits_outstanding;
+                        num_bits_outstanding = 0;
+                    } else {
+                        encoded_delta_of_delta += (data_[byte_offset] & TailMask(8 - bit_offset)) << -shift;
+                        num_bits_outstanding -= 8 - bit_offset;
+                        bit_offset += (8 - bit_offset);
+                    }
+                    if (bit_offset >= 8) {
+                        bit_offset = bit_offset % 8;
+                        byte_offset++;
+                    }
+                }
+                std::cout << "Encoded dd: " << std::bitset<64>(encoded_delta_of_delta) << "\n";
+                if ((encoded_delta_of_delta & (0b1 << (num_bits - 1))) > 0) {
+                    std::cout << "Negatifying the val" << "\n";
+                    encoded_delta_of_delta |= (0xFFFFFFFFFFFFFFFF << num_bits);
+                }
+                delta = last_delta + encoded_delta_of_delta;
+                TSType timestamp = last_timestamp + delta;
+
+                std::cout << "Encoded delta of delta is: " << encoded_delta_of_delta << "\n";
+                std::cout << "Delta is: " << delta << "\n";
+                unpacked.push_back({timestamp, 0});
+                last_delta = delta;
+                last_timestamp = timestamp;
+                break;
+            } else {
+                std::cout << "Sequence not matched, number: " << number << ", sequence " << p.second << "\n";
+            }
+        }
+    }
+
     return unpacked;
 }
 
@@ -109,11 +212,11 @@ std::pair<std::vector<std::uint8_t>, int> BitAppend(int bit_offset, int number_o
     std::vector<std::uint8_t> output;
     std::uint8_t byte = initial_byte;
     while (number_of_bits > 0) {
-        int offset = number_of_bits - 8 + bit_offset;
-        if (offset > 0) {
-            byte |= (value >> offset) & 0xFF;
+        int shift = number_of_bits - 8 + bit_offset;
+        if (shift > 0) {
+            byte |= (value >> shift) & 0xFF;
         } else {
-            byte |= (value << -offset) & 0xFF;
+            byte |= (value << -shift) & 0xFF;
         }
         output.push_back(byte);
         number_of_bits -= (8 - bit_offset);
@@ -167,8 +270,5 @@ void EncodedDataBlock::Append(TSType timestamp, ValType val) {
     data_.insert(data_.end(), output_pair.first.begin(), output_pair.first.end());
     data_end_offset_ = output_pair.second;
 }
-
-// Encoding aligned. And later shifting across bytes.
-
 
 } // namespace compression
