@@ -34,7 +34,7 @@ TSType AlignTS(TSType timestamp) {
 }
 
 EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
- last_ts_(timestamp), last_val_(val) {
+ last_ts_(timestamp), last_val_(val), last_xor_leading_zeros_(-1), last_xor_meaningful_bits_(-1)  {
     // Align timestamp to the epoch and figure out what the delta is.
     auto aligned_ts = AlignTS(timestamp);
     std::uint16_t delta = timestamp - aligned_ts;
@@ -227,7 +227,7 @@ std::pair<std::vector<std::uint8_t>, int> BitAppend(int bit_offset, int number_o
     return {output, bit_offset};
 }
 
-void EncodedDataBlock::Append(TSType timestamp, ValType val) {
+void EncodedDataBlock::EncodeTS(TSType timestamp) {
     int delta = timestamp - last_ts_;
     int delta_of_delta = delta - last_ts_delta_;
     last_ts_delta_ = delta;
@@ -271,4 +271,58 @@ void EncodedDataBlock::Append(TSType timestamp, ValType val) {
     data_end_offset_ = output_pair.second;
 }
 
+void EncodedDataBlock::EncodeVal(ValType val) {
+    std::uint64_t xored = (std::uint64_t)val ^ (std::uint64_t)last_val_;
+    if (xored == 0) {
+        // store 0 and return
+
+    }
+
+    // store 1
+    int leading_zero_bits = LeadingZeroBits(xored);
+    int trailing_zero_bits = TrailingZeroBits(xored);
+    int meaningful_bits = 64 - leading_zero_bits - trailing_zero_bits;
+    
+    if (last_xor_leading_zeros_ != -1) {
+        if (leading_zero_bits == last_xor_leading_zeros_ &&
+         last_xor_meaningful_bits_ == meaningful_bits) {
+             // use same scheme as before.
+             // 0 for encoding
+         }
+    }
+    // 1 for encoding and more fun
+}
+
+void EncodedDataBlock::Append(TSType timestamp, ValType val) {
+    EncodeTS(timestamp);
+}
+
+int LeadingZeroBits(std::uint64_t val) {
+    std::bitset<64> bitset_val(val);
+    int count = 0;
+    for (int i = 0; i < 64; i++) {
+        if (bitset_val[63 - i] == 0 ) {
+            count++;
+        } else {
+            break;
+        }
+    }
+    return count;
+}
+
+int TrailingZeroBits(std::uint64_t val) {
+    std::bitset<64> bitset_val(val);
+    int count = 0;
+    for (int i = 0; i < 64; i++) {
+        if (bitset_val[i] == 0 ) {
+            count++;
+        } else {
+            break;
+        }
+    }
+    return count;
+}
+// What do I need for the value encoding.
+// Count leading zeroes.
+// Count trailing zeroes.
 } // namespace compression

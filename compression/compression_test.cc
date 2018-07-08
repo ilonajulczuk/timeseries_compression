@@ -58,3 +58,19 @@ TEST(BitAppend, TestIfAppendingBitsZeroOffset) {
   std::vector<std::uint8_t> expected_vec {0b10000001, 0b10000000};
   EXPECT_EQ(expected_vec, output_pair.first);
 }
+
+TEST(ValEncoding, LeadingZeroes) {
+  ASSERT_EQ(57, compression::LeadingZeroBits(0b1111011));
+  ASSERT_EQ(45, compression::LeadingZeroBits(0b1111010000100100000));
+  ASSERT_EQ(46, compression::LeadingZeroBits(0b111001001000010000));
+  ASSERT_EQ(64, compression::LeadingZeroBits(0));
+  ASSERT_EQ(0, compression::LeadingZeroBits(0xFFFFFFFFFFFFFFFF));
+ }
+
+ TEST(ValEncoding, TrailingZeroes) {
+  ASSERT_EQ(0, compression::TrailingZeroBits(0b1111011));
+  ASSERT_EQ(5, compression::TrailingZeroBits(0b1111010000100100000));
+  ASSERT_EQ(4, compression::TrailingZeroBits(0b111001001000010000));
+  ASSERT_EQ(64, compression::TrailingZeroBits(0));
+  ASSERT_EQ(0, compression::TrailingZeroBits(0xFFFFFFFFFFFFFFFF));
+ }

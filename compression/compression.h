@@ -18,35 +18,43 @@ std::pair<std::vector<std::uint8_t>, int> BitAppend(
 
 void PrintBin(std::vector<std::uint8_t> data);
 // TODO: figure out how to handle failures, either exceptions or status codes?
+
+
+int LeadingZeroBits(std::uint64_t val);
+int TrailingZeroBits(std::uint64_t val);
+
 class EncodedDataBlock {
 
 public:
 
-EncodedDataBlock(TSType timestamp, ValType val);
+    EncodedDataBlock(TSType timestamp, ValType val);
 
-bool WithinRange(TSType timestamp);
+    bool WithinRange(TSType timestamp);
 
-void Append(TSType timestamp, ValType val);
+    void Append(TSType timestamp, ValType val);
 
-std::vector<std::pair<TSType, ValType>> Decode();
-void PrintBinData() {
-    PrintBin(data_);
-}
+    std::vector<std::pair<TSType, ValType>> Decode();
+    void PrintBinData() {
+        PrintBin(data_);
+    }
 
 private:
+    // start_ts_ is necessary to check if the next value fits within the block.
+    TSType start_ts_;
 
-// start_ts_ is necessary to check if the next value fits within the block.
-TSType start_ts_;
+    // Make life easier by caching values necessary for encoding next ts, val pair. 
+    TSType last_ts_;
+    ValType last_val_;
+    int last_ts_delta_;
+    int last_xor_leading_zeros_;
+    int last_xor_meaningful_bits_;
 
-// Make life easier by caching values necessary for encoding next ts, val pair. 
-TSType last_ts_;
-int last_ts_delta_;
-ValType last_val_;
+    // The actual encrypted data and its offset if the bits are not aligned perfectly from the end. 
+    int data_end_offset_;
+    std::vector<std::uint8_t> data_;
 
-// The actual encrypted data and its offset if the bits are not aligned perfectly from the end. 
-int data_end_offset_;
-std::vector<std::uint8_t> data_;
-
+    void EncodeTS(TSType timestamp);
+    void EncodeVal(ValType val);
 };
 
 
@@ -54,23 +62,23 @@ class Encoder {
 
 public:
 
-void Append(TSType timestamp, ValType val);
+    void Append(TSType timestamp, ValType val);
 
-std::vector<std::pair<TSType, ValType>> Decode();
-// Iterators to easily iterate over the data?
+    std::vector<std::pair<TSType, ValType>> Decode();
+    // Iterators to easily iterate over the data?
 
-void PrintBinData() {
-    for (auto b: blocks_) {
-        b->PrintBinData();
+    void PrintBinData() {
+        for (auto b: blocks_) {
+            b->PrintBinData();
+        }
     }
-}
 private:
-EncodedDataBlock* StartNewBlock(TSType timestamp, ValType val) {
-    return new EncodedDataBlock(timestamp, val);
-}
+    EncodedDataBlock* StartNewBlock(TSType timestamp, ValType val) {
+        return new EncodedDataBlock(timestamp, val);
+    }
 
-// TODO: ownership of this.
-std::vector<EncodedDataBlock*> blocks_;
+    // TODO: ownership of this.
+    std::vector<EncodedDataBlock*> blocks_;
 };
 
 
