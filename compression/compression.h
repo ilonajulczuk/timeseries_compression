@@ -53,6 +53,7 @@ private:
     int data_end_offset_;
     std::vector<std::uint8_t> data_;
 
+    void AppendBits(int number_of_bits, std::uint64_t value);
     void EncodeTS(TSType timestamp);
     void EncodeVal(ValType val);
 };

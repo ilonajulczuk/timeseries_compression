@@ -271,27 +271,44 @@ void EncodedDataBlock::EncodeTS(TSType timestamp) {
     data_end_offset_ = output_pair.second;
 }
 
+void EncodedDataBlock::AppendBits(int number_of_bits, std::uint64_t value) {
+    std::uint8_t initial_byte = 0;
+    if (data_end_offset_ > 0) {
+        initial_byte = data_.back();
+        data_.pop_back();
+    }
+    auto output_pair = BitAppend(data_end_offset_, number_of_bits, value, initial_byte);
+    data_.insert(data_.end(), output_pair.first.begin(), output_pair.first.end());
+    data_end_offset_ = output_pair.second;
+}
+
+std::uint64_t TrimToMeaningfulBits(std::uint64_t value, int leading_zeros, int trailing_zeros) {
+    return value >> trailing_zeros;
+}
+
 void EncodedDataBlock::EncodeVal(ValType val) {
     std::uint64_t xored = (std::uint64_t)val ^ (std::uint64_t)last_val_;
     if (xored == 0) {
-        // store 0 and return
-
+        AppendBits(1, 0);
+        return;
     }
-
-    // store 1
+    AppendBits(1, 1);
     int leading_zero_bits = LeadingZeroBits(xored);
     int trailing_zero_bits = TrailingZeroBits(xored);
     int meaningful_bits = 64 - leading_zero_bits - trailing_zero_bits;
     
-    if (last_xor_leading_zeros_ != -1) {
-        if (leading_zero_bits == last_xor_leading_zeros_ &&
-         last_xor_meaningful_bits_ == meaningful_bits) {
-             // use same scheme as before.
-             // 0 for encoding
-         }
+    if (last_xor_leading_zeros_ != -1 && leading_zero_bits == last_xor_leading_zeros_ &&
+        last_xor_meaningful_bits_ == meaningful_bits) {
+        AppendBits(1, 0);
+        AppendBits(meaningful_bits, TrimToMeaningfulBits(xored, leading_zero_bits, trailing_zero_bits));
+    } else {
+        AppendBits(1, 1);
+        AppendBits(5, leading_zero_bits);
+        AppendBits(6, meaningful_bits);
+        AppendBits(meaningful_bits, TrimToMeaningfulBits(xored, leading_zero_bits, trailing_zero_bits));
     }
-    // 1 for encoding and more fun
 }
+
 
 void EncodedDataBlock::Append(TSType timestamp, ValType val) {
     EncodeTS(timestamp);
