@@ -11,6 +11,37 @@ namespace compression {
 
 const int kMaxTimeLengthOfBlockSecs = 2 * 60 * 60;
 
+std::map<int, unsigned int> kLenToSequenceTS = {
+    {1, 0b0},
+    {2, 0b10},
+    {3, 0b110},
+    {4, 0b1110},
+    {4, 0b1111}
+};
+
+std::vector<std::pair<int, unsigned int>> kLenToSequenceVal = {
+    {1, 0b0},
+    {2, 0b10},
+    {2, 0b11},
+};
+
+std::map<int, int> kSequenceToNumBits = {
+    {0b0, 0},
+    {0b10, 7},
+    {0b110, 9},
+    {0b1110, 12},
+    {0b1111, 32}
+};
+
+
+std::uint64_t DoubleAsInt(ValType val) {
+    return *reinterpret_cast<std::uint64_t*>(&val);
+}
+
+ValType DoubleFromInt(std::uint64_t int_encoded) {
+    return *reinterpret_cast<ValType*>(&int_encoded);
+}
+
 // Helper function to print bit values.
 void PrintHex(std::vector<std::uint8_t> data) {
     std::cout << "Values in hex:\n";
@@ -26,6 +57,11 @@ void PrintBin(std::vector<std::uint8_t> data) {
         std::cout << std::bitset<8>(d) << "\n";
     }
     std::cout << "\n";
+}
+
+void PrintBin(std::uint64_t data) {
+    std::cout << "Values in binary:\n";
+    std::cout << std::bitset<64>(data) << "\n";
 }
 
 TSType AlignTS(TSType timestamp) {
@@ -59,11 +95,40 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
     for (int i = 0; i < (int)sizeof(ValType); i++) {
         data_.push_back(c[i]);
     }
+    data_end_offset_ = 0;
 }
 
 
 std::uint8_t TailMask(int tail_size) {
     return 0xFF >> (8 - tail_size);
+}
+
+
+std::uint64_t ReadBits(int num_bits, unsigned int byte_offset, int bit_offset, std::vector<std::uint8_t>& data) {
+    std::uint64_t encoded = 0;
+    int num_bits_outstanding = num_bits;
+    while(byte_offset < data.size() && num_bits_outstanding > 0) {
+        int shift = 8 - num_bits_outstanding - bit_offset;
+        if (shift > 0) { // no caryover!
+            encoded += data[byte_offset] >> shift & TailMask(num_bits_outstanding);
+            bit_offset += num_bits_outstanding;
+            num_bits_outstanding = 0;
+        } else {
+            std::uint64_t dd = data[byte_offset] & TailMask(8 - bit_offset);
+            encoded += dd << -shift;num_bits_outstanding -= 8 - bit_offset;
+            bit_offset += (8 - bit_offset);
+        }
+        if (bit_offset >= 8) {
+            bit_offset = bit_offset % 8;
+            byte_offset++;
+        }
+    }
+    // some sort of exception/error if requested to read more bits than available in the data stream?
+    return encoded;
+}
+
+std::uint64_t EncodedDataBlock::ReadBits(int num_bits, unsigned int byte_offset, int bit_offset) {
+    return compression::ReadBits(num_bits, byte_offset, bit_offset, data_);
 }
 
 
@@ -83,94 +148,39 @@ std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
     std::copy(data_.begin() + offset, data_.begin() + offset + (int)sizeof(ValType), data);
     ValType val = *reinterpret_cast<ValType*>(&data);
     std::vector<std::pair<TSType, ValType>> unpacked{{aligned_timestamp + delta, val}};
+    last_val_ = val;
     offset += (int)sizeof(ValType);
 
     int last_delta = delta;
     TSType last_timestamp = aligned_timestamp + delta;
-    // I should be alternating now between timestamps and values.
-    // Values are not encoded yet, so I will assume zeros.
+    TSType timestamp = 0;
     unsigned int byte_offset = offset;
     int bit_offset = 0;
-
-    std::map<int, int> len_to_sequence = {
-        {1, 0b0},
-        {2, 0b10},
-        {3, 0b110},
-        {4, 0b1110},
-        {4, 0b1111}
-    };
-
-    std::map<int, int> sequence_to_num_bits = {
-        {0b0, 0},
-        {0b10, 7},
-        {0b110, 9},
-        {0b1110, 12},
-        {0b1111, 32}
-    };
-
     while (byte_offset < data_.size()) {
-        std::cout << "Byte offset: " << byte_offset << ", bit offset: " << bit_offset << "\n";
-        std::cout << "Current byte: " << std::bitset<8>(data_[byte_offset]) << "\n";
-
         if ((byte_offset == data_.size() - 1) && bit_offset >= data_end_offset_) {
             break;
         }
-
-        for (auto p: len_to_sequence) {
+        for (auto p: kLenToSequenceTS) {
             auto len_of_sequence = p.first;
             auto sequence = p.second;
-            int shift = 8 - len_of_sequence - bit_offset;
-            int number = 0;
-            if (shift > 0) { // no caryover!
-                std::cout << "No carryover\n";
-                number = data_[byte_offset] >> shift & TailMask(len_of_sequence);
-            } else {
-                std::cout << "Carryover\n";
-                if (byte_offset + 1 >= data_.size()) {
-                    break;
-                }
-                number = (data_[byte_offset] & TailMask(len_of_sequence + shift)) << -shift;
-                int carry_shift = 8 - len_of_sequence;
-                int carry_over_number = (data_[byte_offset + 1] >> carry_shift) & TailMask(-shift);
-                number += carry_over_number;
-            }
+            auto number = ReadBits(len_of_sequence, byte_offset, bit_offset);
             if (number == sequence) {
-                std::cout << "Matched the sequence: " << sequence << "\n";
                 bit_offset += len_of_sequence;
                 if (bit_offset > 7) {
                     bit_offset -= 8;
                     byte_offset += 1;
                 }
-                std::int64_t encoded_delta_of_delta = 0;
-                int num_bits = sequence_to_num_bits[sequence];
-                int num_bits_outstanding = num_bits;
-                while(byte_offset < data_.size() && num_bits_outstanding > 0) {
-                    shift = 8 - num_bits_outstanding - bit_offset;
-                    if (shift > 0) { // no caryover!
-                        encoded_delta_of_delta += data_[byte_offset] >> shift & TailMask(num_bits_outstanding);
-                        bit_offset += num_bits_outstanding;
-                        num_bits_outstanding = 0;
-                    } else {
-                        encoded_delta_of_delta += (data_[byte_offset] & TailMask(8 - bit_offset)) << -shift;
-                        num_bits_outstanding -= 8 - bit_offset;
-                        bit_offset += (8 - bit_offset);
-                    }
-                    if (bit_offset >= 8) {
-                        bit_offset = bit_offset % 8;
-                        byte_offset++;
-                    }
-                }
-                std::cout << "Encoded dd: " << std::bitset<64>(encoded_delta_of_delta) << "\n";
+
+                int num_bits = kSequenceToNumBits[sequence];
+                std::int64_t encoded_delta_of_delta = ReadBits(num_bits, byte_offset, bit_offset);
+                bit_offset += num_bits;
+                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                bit_offset %= 8;
                 if ((encoded_delta_of_delta & (0b1 << (num_bits - 1))) > 0) {
-                    std::cout << "Negatifying the val" << "\n";
                     encoded_delta_of_delta |= (0xFFFFFFFFFFFFFFFF << num_bits);
                 }
                 delta = last_delta + encoded_delta_of_delta;
-                TSType timestamp = last_timestamp + delta;
-
-                std::cout << "Encoded delta of delta is: " << encoded_delta_of_delta << "\n";
-                std::cout << "Delta is: " << delta << "\n";
-                unpacked.push_back({timestamp, 0});
+                timestamp = last_timestamp + delta;
                 last_delta = delta;
                 last_timestamp = timestamp;
                 break;
@@ -178,6 +188,66 @@ std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
                 std::cout << "Sequence not matched, number: " << number << ", sequence " << p.second << "\n";
             }
         }
+
+        for (auto p: kLenToSequenceVal) {
+            auto len_of_sequence = p.first;
+            auto sequence = p.second;
+            auto number = ReadBits(len_of_sequence, byte_offset, bit_offset);
+            if (number == sequence) {
+                bit_offset += len_of_sequence;
+                if (bit_offset > 7) {
+                    bit_offset -= 8;
+                    byte_offset += 1;
+                }
+                switch (sequence) {
+                    case 0:
+                        val = last_val_;
+                        break;
+                    case 2: {
+                        auto xored_shifted = ReadBits(last_xor_meaningful_bits_, byte_offset, bit_offset);
+                        bit_offset += last_xor_meaningful_bits_;
+                        byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                        bit_offset %= 8;
+                        auto xored = xored_shifted << (64 - last_xor_meaningful_bits_ - last_xor_leading_zeros_);
+                        val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
+                        break;
+                    }
+                    case 3: {
+                        int num_bits = 6;
+                        auto leading_zeros = ReadBits(num_bits, byte_offset, bit_offset);
+                        bit_offset += num_bits;
+                        byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                        bit_offset %= 8;
+
+                        num_bits = 6;
+                        auto meaningful_bits = ReadBits(num_bits, byte_offset, bit_offset);
+                        bit_offset += num_bits;
+                        byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                        bit_offset %= 8;
+
+                        num_bits = meaningful_bits;
+                        std::uint64_t xored_shifted = ReadBits(num_bits, byte_offset, bit_offset);
+                        bit_offset += num_bits;
+                        byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                        bit_offset %= 8;
+
+                        std::uint64_t xored = xored_shifted << (64 - meaningful_bits - leading_zeros);
+
+                        last_xor_leading_zeros_ = leading_zeros;
+                        last_xor_meaningful_bits_ = meaningful_bits;
+                        val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
+                        break;
+                    }
+                }
+
+                last_val_ = val;
+                break;
+            } else {
+                std::cout << "Sequence not matched for val, number: " << number << ", sequence " << p.second << "\n";
+            }
+        }
+
+        unpacked.push_back({timestamp, val});
     }
 
     return unpacked;
@@ -233,7 +303,6 @@ void EncodedDataBlock::EncodeTS(TSType timestamp) {
     last_ts_delta_ = delta;
     last_ts_ = timestamp;
     int number_of_bits;
-    std::cout << "Delta of delta " << delta_of_delta << "\n";
     std::uint32_t mask;
     std::uint64_t output = 0;
     std::uint64_t encoding = 0;
@@ -265,7 +334,6 @@ void EncodedDataBlock::EncodeTS(TSType timestamp) {
         initial_byte = data_.back();
         data_.pop_back();
     }
-    std::cout << "Val to be appended " << std::bitset<64>(output) << "\n";
     auto output_pair = BitAppend(data_end_offset_, number_of_bits, output, initial_byte);
     data_.insert(data_.end(), output_pair.first.begin(), output_pair.first.end());
     data_end_offset_ = output_pair.second;
@@ -287,31 +355,36 @@ std::uint64_t TrimToMeaningfulBits(std::uint64_t value, int leading_zeros, int t
 }
 
 void EncodedDataBlock::EncodeVal(ValType val) {
-    std::uint64_t xored = (std::uint64_t)val ^ (std::uint64_t)last_val_;
+    std::uint64_t xored = DoubleAsInt(val) ^ DoubleAsInt(last_val_);
     if (xored == 0) {
         AppendBits(1, 0);
         return;
     }
     AppendBits(1, 1);
+
     int leading_zero_bits = LeadingZeroBits(xored);
     int trailing_zero_bits = TrailingZeroBits(xored);
     int meaningful_bits = 64 - leading_zero_bits - trailing_zero_bits;
-    
+
     if (last_xor_leading_zeros_ != -1 && leading_zero_bits == last_xor_leading_zeros_ &&
         last_xor_meaningful_bits_ == meaningful_bits) {
         AppendBits(1, 0);
         AppendBits(meaningful_bits, TrimToMeaningfulBits(xored, leading_zero_bits, trailing_zero_bits));
     } else {
         AppendBits(1, 1);
-        AppendBits(5, leading_zero_bits);
+        AppendBits(6, leading_zero_bits);
         AppendBits(6, meaningful_bits);
         AppendBits(meaningful_bits, TrimToMeaningfulBits(xored, leading_zero_bits, trailing_zero_bits));
     }
+    last_val_ = val;
+    last_xor_leading_zeros_ = leading_zero_bits;
+    last_xor_meaningful_bits_ = meaningful_bits;
 }
 
 
 void EncodedDataBlock::Append(TSType timestamp, ValType val) {
     EncodeTS(timestamp);
+    EncodeVal(val);
 }
 
 int LeadingZeroBits(std::uint64_t val) {
@@ -339,7 +412,5 @@ int TrailingZeroBits(std::uint64_t val) {
     }
     return count;
 }
-// What do I need for the value encoding.
-// Count leading zeroes.
-// Count trailing zeroes.
+
 } // namespace compression

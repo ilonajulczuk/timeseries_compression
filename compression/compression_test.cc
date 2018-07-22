@@ -1,37 +1,46 @@
 #include "compression.h"
 #include "gtest/gtest.h"
 
+namespace compression {
 
-TEST(CompressionTest, CountOfEncodedElements) {
+TEST(CompressionTest, TestEndToEnd) {
   compression::Encoder encoder{};
-  encoder.Append(2 * 60 * 60 + 5, 6.66);
+  encoder.Append(2 * 60 * 60 + 5, 6.666);
   encoder.PrintBinData();
-  encoder.Append(2 * 60 * 60 + 11, 7.66);
+
+  encoder.Append(2 * 60 * 60 + 11, 66.66);
   encoder.PrintBinData();
   encoder.Append(2 * 60 * 60 + 13, 8.66);
   encoder.PrintBinData();
   encoder.Append(2 * 60 * 60 + 313, 8.66);
   encoder.PrintBinData();
-  encoder.Append(2 * 60 * 60 + 613, 8.66);
+  encoder.Append(2 * 60 * 60 + 613, 7.21);
   encoder.PrintBinData();
   encoder.Append(2 * 60 * 60 + 713, 8.66);
   encoder.PrintBinData();
   encoder.Append(2 * 60 * 60 + 816, 8.66);
   encoder.PrintBinData();
   encoder.Append(2 * 60 * 60 + 913, 8.66);
+
   auto ts_data = encoder.Decode();
   EXPECT_EQ(8U, ts_data.size());
   EXPECT_EQ(2 * 60 * 60 + 5U, ts_data[0].first);
-  //EXPECT_FLOAT_EQ(6.66, ts_data[0].second);
+  EXPECT_FLOAT_EQ(6.666, ts_data[0].second);
   EXPECT_EQ(2 * 60 * 60 + 11U, ts_data[1].first);
-  //EXPECT_FLOAT_EQ(7.66, ts_data[1].second);
+  EXPECT_FLOAT_EQ(66.66, ts_data[1].second);
+
   EXPECT_EQ(2 * 60 * 60 + 13U, ts_data[2].first);
+  EXPECT_FLOAT_EQ(8.66, ts_data[2].second);
+
   EXPECT_EQ(2 * 60 * 60 + 313U, ts_data[3].first);
+
+  EXPECT_FLOAT_EQ(8.66, ts_data[3].second);
   EXPECT_EQ(2 * 60 * 60 + 613U, ts_data[4].first);
+
+  EXPECT_FLOAT_EQ(7.21, ts_data[4].second);
   EXPECT_EQ(2 * 60 * 60 + 713U, ts_data[5].first);
   EXPECT_EQ(2 * 60 * 60 + 816U, ts_data[6].first);
   EXPECT_EQ(2 * 60 * 60 + 913U, ts_data[7].first);
-  encoder.PrintBinData();
 }
 
 TEST(BitAppend, TestIfAppendingBitsWorksCorrectly) {
@@ -74,3 +83,26 @@ TEST(ValEncoding, LeadingZeroes) {
   ASSERT_EQ(64, compression::TrailingZeroBits(0));
   ASSERT_EQ(0, compression::TrailingZeroBits(0xFFFFFFFFFFFFFFFF));
  }
+
+ TEST(Decoding, ReadBits) {
+  std::vector<std::uint8_t> data = {
+    0b11101101,
+    0b00101000,
+    0b00001111,
+    0b00011010,
+    0b01011111,
+    0b00111101,
+    0b01110001,
+    0b00111000,
+  };
+  auto bits = ReadBits(54, 0, 7,data);
+  PrintBin(bits);
+  ASSERT_EQ(0b100101000000011110001101001011111001111010111000100111U, bits);
+ }
+
+ TEST(ValEncoding, DoubleIntConvertion) {
+  ValType val = 6.666;
+  auto as_int = DoubleAsInt(val);
+  ASSERT_EQ(val, DoubleFromInt(as_int));
+ }
+}

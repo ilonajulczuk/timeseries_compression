@@ -17,6 +17,11 @@ std::pair<std::vector<std::uint8_t>, int> BitAppend(
 
 
 void PrintBin(std::vector<std::uint8_t> data);
+void PrintBin(std::uint64_t data);
+std::uint64_t DoubleAsInt(ValType val);
+std::uint64_t ReadBits(int num_bits, unsigned int byte_offset, int bit_offset, std::vector<std::uint8_t>& data);
+ValType DoubleFromInt(std::uint64_t int_encoded);
+
 // TODO: figure out how to handle failures, either exceptions or status codes?
 
 
@@ -42,20 +47,21 @@ private:
     // start_ts_ is necessary to check if the next value fits within the block.
     TSType start_ts_;
 
-    // Make life easier by caching values necessary for encoding next ts, val pair. 
+    // Make life easier by caching values necessary for encoding next ts, val pair.
     TSType last_ts_;
     ValType last_val_;
     int last_ts_delta_;
     int last_xor_leading_zeros_;
     int last_xor_meaningful_bits_;
 
-    // The actual encrypted data and its offset if the bits are not aligned perfectly from the end. 
+    // The actual encrypted data and its offset if the bits are not aligned perfectly from the end.
     int data_end_offset_;
     std::vector<std::uint8_t> data_;
 
     void AppendBits(int number_of_bits, std::uint64_t value);
     void EncodeTS(TSType timestamp);
     void EncodeVal(ValType val);
+    std::uint64_t ReadBits(int num_bits, unsigned int byte_offset, int bit_offset);
 };
 
 
