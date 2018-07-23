@@ -70,32 +70,17 @@ TSType AlignTS(TSType timestamp) {
 }
 
 EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
- last_ts_(timestamp), last_val_(val), last_xor_leading_zeros_(-1), last_xor_meaningful_bits_(-1)  {
+ last_ts_(timestamp), last_val_(val), last_xor_leading_zeros_(-1), last_xor_meaningful_bits_(-1), data_end_offset_(0)  {
     // Align timestamp to the epoch and figure out what the delta is.
     auto aligned_ts = AlignTS(timestamp);
     std::uint16_t delta = timestamp - aligned_ts;
     last_ts_delta_ = delta;
     last_ts_ = timestamp;
     start_ts_ = aligned_ts;
-    // store the last delta.
-    // Encode stuff correctly.
 
-    std::uint8_t mask = 0xFF;
-    for (int i = 0; i < (int)sizeof(TSType); i++) {
-        data_.push_back((mask & (aligned_ts >> ((int)sizeof(TSType) - i - 1) * 8)));
-    }
-
-    // Paper says 14 bits, but, 2 bits of a difference and lack of
-    // need for shifting everything sounds like an advantage to me.
-    for (int i = 0; i < 2; i++) {
-        data_.push_back((mask & (delta >> (2 - i - 1) * 8)));
-    }
-
-    const std::uint8_t *c = reinterpret_cast<std::uint8_t *>(&val);
-    for (int i = 0; i < (int)sizeof(ValType); i++) {
-        data_.push_back(c[i]);
-    }
-    data_end_offset_ = 0;
+    AppendBits(64, aligned_ts);
+    AppendBits(16, delta);
+    AppendBits(64, DoubleAsInt(val));
 }
 
 
@@ -131,40 +116,31 @@ std::uint64_t EncodedDataBlock::ReadBits(int num_bits, unsigned int byte_offset,
     return compression::ReadBits(num_bits, byte_offset, bit_offset, data_);
 }
 
-
 std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
-    int ts_size = sizeof(TSType);
-    TSType aligned_timestamp = 0;
-    for (int i = 0; i < ts_size; i++) {
-        aligned_timestamp |= (data_[i] << (ts_size - 1 - i) * 8);
-    }
-    int delta_size = 2;
-    std::uint16_t delta = 0;
-    for (int i = ts_size; i < ts_size + delta_size; i++) {
-        delta |= (data_[i] << (2 - 1 - i) * 8);
-    }
-    int offset = ts_size + delta_size;
-    std::uint8_t data[sizeof(ValType)];
-    std::copy(data_.begin() + offset, data_.begin() + offset + (int)sizeof(ValType), data);
-    ValType val = *reinterpret_cast<ValType*>(&data);
-    std::vector<std::pair<TSType, ValType>> unpacked{{aligned_timestamp + delta, val}};
-    last_val_ = val;
-    offset += (int)sizeof(ValType);
+    TSType aligned_timestamp = ReadBits(64, 0, 0);
+    std::uint16_t delta = ReadBits(16, 8, 0);
+    ValType val = DoubleFromInt(ReadBits(64, 10, 0));
 
-    int last_delta = delta;
     TSType last_timestamp = aligned_timestamp + delta;
+    std::vector<std::pair<TSType, ValType>> unpacked{{last_timestamp, val}};
+    last_val_ = val;
+    int last_delta = delta;
+
     TSType timestamp = 0;
-    unsigned int byte_offset = offset;
+    unsigned int byte_offset = 8 + 2 + 8;
     int bit_offset = 0;
+
     while (byte_offset < data_.size()) {
         if ((byte_offset == data_.size() - 1) && bit_offset >= data_end_offset_) {
             break;
         }
+        bool matched = false;
         for (auto p: kLenToSequenceTS) {
             auto len_of_sequence = p.first;
             auto sequence = p.second;
             auto number = ReadBits(len_of_sequence, byte_offset, bit_offset);
             if (number == sequence) {
+                matched = true;
                 bit_offset += len_of_sequence;
                 if (bit_offset > 7) {
                     bit_offset -= 8;
@@ -184,69 +160,74 @@ std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
                 last_delta = delta;
                 last_timestamp = timestamp;
                 break;
-            } else {
-                std::cout << "Sequence not matched, number: " << number << ", sequence " << p.second << "\n";
             }
         }
-
+        if (!matched) {
+            throw ParsingError("timestamp couldn't be decoded, sequence not matched");
+        }
+        matched = false;
+        unsigned int number = 0;
         for (auto p: kLenToSequenceVal) {
             auto len_of_sequence = p.first;
             auto sequence = p.second;
-            auto number = ReadBits(len_of_sequence, byte_offset, bit_offset);
+            number = ReadBits(len_of_sequence, byte_offset, bit_offset);
             if (number == sequence) {
                 bit_offset += len_of_sequence;
                 if (bit_offset > 7) {
                     bit_offset -= 8;
                     byte_offset += 1;
                 }
-                switch (sequence) {
-                    case 0:
-                        val = last_val_;
-                        break;
-                    case 2: {
-                        auto xored_shifted = ReadBits(last_xor_meaningful_bits_, byte_offset, bit_offset);
-                        bit_offset += last_xor_meaningful_bits_;
-                        byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                        bit_offset %= 8;
-                        auto xored = xored_shifted << (64 - last_xor_meaningful_bits_ - last_xor_leading_zeros_);
-                        val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
-                        break;
-                    }
-                    case 3: {
-                        int num_bits = 6;
-                        auto leading_zeros = ReadBits(num_bits, byte_offset, bit_offset);
-                        bit_offset += num_bits;
-                        byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                        bit_offset %= 8;
-
-                        num_bits = 6;
-                        auto meaningful_bits = ReadBits(num_bits, byte_offset, bit_offset);
-                        bit_offset += num_bits;
-                        byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                        bit_offset %= 8;
-
-                        num_bits = meaningful_bits;
-                        std::uint64_t xored_shifted = ReadBits(num_bits, byte_offset, bit_offset);
-                        bit_offset += num_bits;
-                        byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                        bit_offset %= 8;
-
-                        std::uint64_t xored = xored_shifted << (64 - meaningful_bits - leading_zeros);
-
-                        last_xor_leading_zeros_ = leading_zeros;
-                        last_xor_meaningful_bits_ = meaningful_bits;
-                        val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
-                        break;
-                    }
-                }
-
-                last_val_ = val;
+                matched = true;
                 break;
-            } else {
-                std::cout << "Sequence not matched for val, number: " << number << ", sequence " << p.second << "\n";
             }
         }
+        if (!matched) {
+            throw ParsingError("value couldn't be decoded, sequence not matched");
+        }
+        switch (number) {
+            case 0:
+                val = last_val_;
+                break;
+            case 2: {
+                auto xored_shifted = ReadBits(last_xor_meaningful_bits_, byte_offset, bit_offset);
+                bit_offset += last_xor_meaningful_bits_;
+                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                bit_offset %= 8;
+                auto xored = xored_shifted << (64 - last_xor_meaningful_bits_ - last_xor_leading_zeros_);
+                val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
+                break;
+            }
+            case 3: {
+                int num_bits = 6;
+                auto leading_zeros = ReadBits(num_bits, byte_offset, bit_offset);
+                bit_offset += num_bits;
+                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                bit_offset %= 8;
 
+                num_bits = 6;
+                auto meaningful_bits = ReadBits(num_bits, byte_offset, bit_offset);
+                bit_offset += num_bits;
+                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                bit_offset %= 8;
+
+                num_bits = meaningful_bits;
+                std::uint64_t xored_shifted = ReadBits(num_bits, byte_offset, bit_offset);
+                bit_offset += num_bits;
+                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+                bit_offset %= 8;
+
+                std::uint64_t xored = xored_shifted << (64 - meaningful_bits - leading_zeros);
+
+                last_xor_leading_zeros_ = leading_zeros;
+                last_xor_meaningful_bits_ = meaningful_bits;
+                val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
+                break;
+            }
+            default:
+                throw ParsingError("unknown sequence number while decoding the value " +
+                 std::to_string(number));
+        }
+        last_val_ = val;
         unpacked.push_back({timestamp, val});
     }
 
@@ -329,14 +310,7 @@ void EncodedDataBlock::EncodeTS(TSType timestamp) {
         output = encoding << 32 | (delta_of_delta & mask);
         number_of_bits = 32 + 4;
     }
-    std::uint8_t initial_byte = 0;
-    if (data_end_offset_ > 0) {
-        initial_byte = data_.back();
-        data_.pop_back();
-    }
-    auto output_pair = BitAppend(data_end_offset_, number_of_bits, output, initial_byte);
-    data_.insert(data_.end(), output_pair.first.begin(), output_pair.first.end());
-    data_end_offset_ = output_pair.second;
+    AppendBits(number_of_bits, output);
 }
 
 void EncodedDataBlock::AppendBits(int number_of_bits, std::uint64_t value) {
