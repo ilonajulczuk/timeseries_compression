@@ -28,8 +28,46 @@ std::uint64_t DoubleAsInt(ValType val);
 std::uint64_t ReadBits(int num_bits, unsigned int byte_offset, int bit_offset, std::vector<std::uint8_t>& data);
 ValType DoubleFromInt(std::uint64_t int_encoded);
 
-// TODO: figure out how to handle failures, either exceptions or status codes?
+class EncodedDataBlock;
 
+class DataIterator {
+
+public:
+    // Iterator traits, previously from std::iterator.
+    using value_type = std::pair<TSType, ValType>;
+    using iterator_category = std::input_iterator_tag;
+    using difference_type = std::ptrdiff_t;
+    using pointer = std::pair<TSType, ValType>*;
+    using reference = std::pair<TSType, ValType>&;
+
+    DataIterator(std::vector<std::uint8_t>* data);
+    DataIterator(std::vector<std::uint8_t>* data, int byte_offset, int bit_offset);
+    // Dereferencable.
+    reference operator*();
+
+    DataIterator& operator++();
+    DataIterator operator++(int);
+
+    // Equality / inequality.
+    bool operator==(const DataIterator& rhs);
+    bool operator!=(const DataIterator& rhs);
+
+private:
+    void UpdateOffsets();
+    std::vector<std::uint8_t>* data_;
+    unsigned int byte_offset_;
+    int bit_offset_;
+    TSType last_timestamp_;
+    ValType last_val_;
+    int last_delta_;
+    int last_xor_leading_zeros_;
+    int last_xor_meaningful_bits_;
+
+    int current_size_;
+    std::pair<TSType, ValType> current_pair_;
+
+    void ReadPair();
+};
 
 int LeadingZeroBits(std::uint64_t val);
 int TrailingZeroBits(std::uint64_t val);
@@ -37,8 +75,11 @@ int TrailingZeroBits(std::uint64_t val);
 class EncodedDataBlock {
 
 public:
-
     EncodedDataBlock(TSType timestamp, ValType val);
+    using iterator = DataIterator;
+
+    iterator begin();
+    iterator end();
 
     bool WithinRange(TSType timestamp);
 
@@ -85,13 +126,14 @@ public:
             b->PrintBinData();
         }
     }
+
+    // TODO: make it private again
+    std::vector<EncodedDataBlock*> blocks_;
 private:
     EncodedDataBlock* StartNewBlock(TSType timestamp, ValType val) {
         return new EncodedDataBlock(timestamp, val);
     }
 
-    // TODO: ownership of this.
-    std::vector<EncodedDataBlock*> blocks_;
 };
 
 

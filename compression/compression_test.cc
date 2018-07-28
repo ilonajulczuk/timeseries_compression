@@ -24,6 +24,9 @@ TEST(CompressionTest, TestEndToEnd) {
 
   auto ts_data = encoder.Decode();
   EXPECT_EQ(8U, ts_data.size());
+  for (auto pair : ts_data) {
+    std::cout << pair.first << " " << pair.second << "\n";
+  }
   EXPECT_EQ(2 * 60 * 60 + 5U, ts_data[0].first);
   EXPECT_FLOAT_EQ(6.666, ts_data[0].second);
   EXPECT_EQ(2 * 60 * 60 + 11U, ts_data[1].first);
@@ -104,5 +107,22 @@ TEST(ValEncoding, LeadingZeroes) {
   ValType val = 6.666;
   auto as_int = DoubleAsInt(val);
   ASSERT_EQ(val, DoubleFromInt(as_int));
+ }
+
+ TEST(BlockIterator, IterateOverBlock) {
+  compression::Encoder encoder{};
+  encoder.Append(2 * 60 * 60 + 5, 6.666);
+
+  encoder.Append(2 * 60 * 60 + 11, 66.66);
+  encoder.Append(2 * 60 * 60 + 13, 8.66);
+  encoder.Append(2 * 60 * 60 + 313, 8.66);
+  encoder.Append(2 * 60 * 60 + 613, 7.21);
+  encoder.Append(2 * 60 * 60 + 713, 8.66);
+  encoder.Append(2 * 60 * 60 + 816, 8.66);
+  encoder.Append(2 * 60 * 60 + 913, 8.66);
+  for (auto pair : *encoder.blocks_[0]) {
+    std::cout << pair.first << ": v : " << pair.second << "\n";
+  }
+
  }
 }
