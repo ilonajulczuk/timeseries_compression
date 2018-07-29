@@ -239,13 +239,11 @@ void DataIterator::ReadPair() {
 }
 
 
-EncodedDataBlock::iterator EncodedDataBlock::begin()
-{
+EncodedDataBlock::iterator EncodedDataBlock::begin() {
     return iterator(&data_);
 }
 
-EncodedDataBlock::iterator EncodedDataBlock::end()
-{
+EncodedDataBlock::iterator EncodedDataBlock::end() {
     int end_byte_offset = data_end_offset_ ? data_.size() -1: data_.size();
     return iterator(&data_, end_byte_offset, data_end_offset_);
 }
@@ -255,8 +253,7 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
     last_val_(val),
     last_xor_leading_zeros_(-1), 
     last_xor_meaningful_bits_(-1),
-    data_end_offset_(0){
-        
+    data_end_offset_(0) {
     // Align timestamp to the epoch and figure out what the delta is.
     auto aligned_ts = AlignTS(timestamp);
     std::uint16_t delta = timestamp - aligned_ts;
