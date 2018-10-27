@@ -14,7 +14,6 @@ extern const int kMaxTimeLengthOfBlockSecs;
 class EncodedDataBlock;
 
 std::uint64_t ReadBits(int num_bits, unsigned int byte_offset, int bit_offset, std::vector<std::uint8_t>& data);
-ValType DoubleFromInt(std::uint64_t int_encoded);
 
 class DataIterator {
 
@@ -26,6 +25,7 @@ public:
     using pointer = std::pair<TSType, ValType>*;
     using reference = std::pair<TSType, ValType>&;
 
+    DataIterator();
     DataIterator(std::vector<std::uint8_t>* data);
     DataIterator(std::vector<std::uint8_t>* data, int byte_offset, int bit_offset);
     // Dereferencable.
@@ -96,9 +96,46 @@ private:
 };
 
 
+class Encoder;
+
+class EncoderIterator {
+
+public:
+    // Iterator traits, previously from std::iterator.
+    using value_type = std::pair<TSType, ValType>;
+    using iterator_category = std::input_iterator_tag;
+    using difference_type = std::ptrdiff_t;
+    using pointer = std::pair<TSType, ValType>*;
+    using reference = std::pair<TSType, ValType>&;
+
+    EncoderIterator(std::vector<EncodedDataBlock*>* blocks, bool end = false);
+
+    // Dereferencable.
+    reference operator*();
+
+    EncoderIterator& operator++();
+    EncoderIterator operator++(int);
+
+    // Equality / inequality.
+    bool operator==(const EncoderIterator& rhs);
+    bool operator!=(const EncoderIterator& rhs);
+
+private:
+    // pos_ points at the current block position.
+    unsigned int pos_;
+    DataIterator current_block_it_;
+    DataIterator current_block_end_;
+
+    std::vector<EncodedDataBlock*>* blocks_;
+};
+
 class Encoder {
 
 public:
+    using iterator = EncoderIterator;
+
+    iterator begin();
+    iterator end();
 
     void Append(TSType timestamp, ValType val);
 
@@ -110,10 +147,8 @@ public:
             b->PrintBinData();
         }
     }
-
-    // TODO: make it private again
-    std::vector<EncodedDataBlock*> blocks_;
 private:
+    std::vector<EncodedDataBlock*> blocks_;
     EncodedDataBlock* StartNewBlock(TSType timestamp, ValType val) {
         return new EncodedDataBlock(timestamp, val);
     }

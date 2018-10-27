@@ -109,7 +109,8 @@ TEST(ValEncoding, LeadingZeroes) {
   ASSERT_EQ(val, DoubleFromInt(as_int));
  }
 
- TEST(BlockIterator, IterateOverBlock) {
+
+ TEST(BlockIterator, IterateOverEncoder) {
   compression::Encoder encoder{};
   encoder.Append(2 * 60 * 60 + 5, 6.666);
 
@@ -120,9 +121,10 @@ TEST(ValEncoding, LeadingZeroes) {
   encoder.Append(2 * 60 * 60 + 713, 8.66);
   encoder.Append(2 * 60 * 60 + 816, 8.66);
   encoder.Append(2 * 60 * 60 + 913, 8.66);
-  for (auto pair : *encoder.blocks_[0]) {
+  for (auto pair : encoder) {
     std::cout << pair.first << ": v : " << pair.second << "\n";
   }
 
  }
-}
+
+} // namespace compression

@@ -36,6 +36,10 @@ TSType AlignTS(TSType timestamp) {
     return timestamp - (timestamp % (2 * 60 * 60));
 }
 
+DataIterator::DataIterator():
+ data_(nullptr), byte_offset_(0), bit_offset_(0), current_size_(0) {
+ }
+
 DataIterator::DataIterator(std::vector<std::uint8_t>* data):
  data_(data), byte_offset_(0), bit_offset_(0), current_size_(0) {
  }
@@ -279,27 +283,6 @@ std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
     return output;
 }
 
-void Encoder::Append(TSType timestamp, ValType val) {
-    if (!blocks_.empty()) {
-        auto last_block = blocks_.back();
-        if (last_block->WithinRange(timestamp)) {
-            last_block->Append(timestamp, val);
-            return;
-        }
-    }
-    auto block = StartNewBlock(timestamp, val);
-    blocks_.push_back(block);
-}
-
-std::vector<std::pair<TSType, ValType>> Encoder::Decode() {
-    std::vector<std::pair<TSType, ValType>> all_ts;
-    for(auto block : blocks_) {
-        auto block_ts = block->Decode();
-        all_ts.insert(all_ts.end(), block_ts.begin(), block_ts.end());
-    }
-    return all_ts;
-}
-
 bool EncodedDataBlock::WithinRange(TSType timestamp) {
     return timestamp - start_ts_ < kMaxTimeLengthOfBlockSecs;
 }
@@ -369,9 +352,6 @@ void EncodedDataBlock::AppendBits(int number_of_bits, std::uint64_t value) {
     data_end_offset_ = output_pair.second;
 }
 
-std::uint64_t TrimToMeaningfulBits(std::uint64_t value, int leading_zeros, int trailing_zeros) {
-    return value >> trailing_zeros;
-}
 
 void EncodedDataBlock::EncodeVal(ValType val) {
     std::uint64_t xored = DoubleAsInt(val) ^ DoubleAsInt(last_val_);
@@ -404,6 +384,87 @@ void EncodedDataBlock::EncodeVal(ValType val) {
 void EncodedDataBlock::Append(TSType timestamp, ValType val) {
     EncodeTS(timestamp);
     EncodeVal(val);
+}
+
+
+void Encoder::Append(TSType timestamp, ValType val) {
+    if (!blocks_.empty()) {
+        auto last_block = blocks_.back();
+        if (last_block->WithinRange(timestamp)) {
+            last_block->Append(timestamp, val);
+            return;
+        }
+    }
+    auto block = StartNewBlock(timestamp, val);
+    blocks_.push_back(block);
+}
+
+std::vector<std::pair<TSType, ValType>> Encoder::Decode() {
+    std::vector<std::pair<TSType, ValType>> all_ts;
+    for(auto block : blocks_) {
+        auto block_ts = block->Decode();
+        all_ts.insert(all_ts.end(), block_ts.begin(), block_ts.end());
+    }
+    return all_ts;
+}
+
+EncoderIterator Encoder::begin() {
+    return iterator(&blocks_);
+}
+
+EncoderIterator Encoder::end() {
+    return iterator(&blocks_, true);
+}
+
+EncoderIterator::EncoderIterator(std::vector<EncodedDataBlock*>* blocks, bool end) :
+blocks_(blocks) {
+    if (end) {
+        current_block_it_= (*blocks_)[blocks->size() - 1]->end();
+        current_block_end_ = current_block_it_;
+        pos_ = blocks_->size();
+    } else {
+        pos_ = 0;
+        current_block_it_ = (*blocks_)[0]->begin();
+        current_block_end_ = (*blocks_)[0]->end();
+    }
+}
+
+
+EncoderIterator& EncoderIterator::EncoderIterator::operator++() {
+    current_block_it_++;
+    if (current_block_it_ == current_block_end_) {
+        pos_++;
+        if (pos_ < blocks_->size()) {
+            current_block_it_ = (*blocks_)[pos_]->begin();
+            current_block_end_ = (*blocks_)[pos_]->end();
+        }
+    }
+    return *this;
+}
+
+EncoderIterator EncoderIterator::operator++(int) {
+    EncoderIterator tmp = *this;
+    current_block_it_++;
+    if (current_block_it_ == current_block_end_) {
+        pos_++;
+        if (pos_ < blocks_->size()) {
+            current_block_it_ = (*blocks_)[pos_]->begin();
+            current_block_end_ = (*blocks_)[pos_]->end();
+        }
+    }
+    return tmp;
+}
+
+std::pair<TSType, ValType>& EncoderIterator::operator*() {
+    return *current_block_it_;
+}
+
+bool EncoderIterator::operator==(const EncoderIterator& rhs) {
+    return (blocks_ == rhs.blocks_) && (current_block_it_ == rhs.current_block_it_) && (pos_ == rhs.pos_);
+}
+
+bool EncoderIterator::operator!=(const EncoderIterator& rhs) {
+    return !(*this == rhs);
 }
 
 } // namespace compression
