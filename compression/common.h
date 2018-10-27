@@ -14,5 +14,5 @@ public:
 using TSType = std::uint64_t;
 using ValType = double;
 
-}
+} // namespace compression
 #endif
