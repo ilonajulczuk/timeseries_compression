@@ -4,31 +4,17 @@
 #include <utility>
 #include <vector>
 #include <cinttypes>
-#include <stdexcept>
+#include "common.h"
+#include "helpers.h"
 
 namespace compression {
 
-class ParsingError : public std::logic_error {
-public:
-    ParsingError(const std::string& msg): std::logic_error(msg) {}
-};
-
-using TSType = std::uint64_t;
-using ValType = double;
-
 extern const int kMaxTimeLengthOfBlockSecs;
 
-std::pair<std::vector<std::uint8_t>, int> BitAppend(
-    int bit_offset, int number_of_bits, std::uint64_t value, std::uint8_t initial_byte);
+class EncodedDataBlock;
 
-
-void PrintBin(std::vector<std::uint8_t> data);
-void PrintBin(std::uint64_t data);
-std::uint64_t DoubleAsInt(ValType val);
 std::uint64_t ReadBits(int num_bits, unsigned int byte_offset, int bit_offset, std::vector<std::uint8_t>& data);
 ValType DoubleFromInt(std::uint64_t int_encoded);
-
-class EncodedDataBlock;
 
 class DataIterator {
 
@@ -69,8 +55,6 @@ private:
     void ReadPair();
 };
 
-int LeadingZeroBits(std::uint64_t val);
-int TrailingZeroBits(std::uint64_t val);
 
 class EncodedDataBlock {
 

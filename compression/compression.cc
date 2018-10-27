@@ -1,9 +1,7 @@
-
 #include <vector>
 #include <utility>
-#include <iostream>
 #include "compression.h"
-#include <bitset>
+
 #include <map>
 
 
@@ -32,36 +30,6 @@ std::map<int, int> kSequenceToNumBits = {
     {0b1110, 12},
     {0b1111, 32}
 };
-
-std::uint64_t DoubleAsInt(ValType val) {
-    return *reinterpret_cast<std::uint64_t*>(&val);
-}
-
-ValType DoubleFromInt(std::uint64_t int_encoded) {
-    return *reinterpret_cast<ValType*>(&int_encoded);
-}
-
-// Helper function to print bit values.
-void PrintHex(std::vector<std::uint8_t> data) {
-    std::cout << "Values in hex:\n";
-    for (auto d: data) {
-        std::cout << std::hex << (int)d << "\n";
-    }
-    std::cout << "\n";
-}
-
-void PrintBin(std::vector<std::uint8_t> data) {
-    std::cout << "Values in binary:\n";
-    for (auto d: data) {
-        std::cout << std::bitset<8>(d) << "\n";
-    }
-    std::cout << "\n";
-}
-
-void PrintBin(std::uint64_t data) {
-    std::cout << "Values in binary:\n";
-    std::cout << std::bitset<64>(data) << "\n";
-}
 
 TSType AlignTS(TSType timestamp) {
     // 2h blocks aligned to epoch.
@@ -436,32 +404,6 @@ void EncodedDataBlock::EncodeVal(ValType val) {
 void EncodedDataBlock::Append(TSType timestamp, ValType val) {
     EncodeTS(timestamp);
     EncodeVal(val);
-}
-
-int LeadingZeroBits(std::uint64_t val) {
-    std::bitset<64> bitset_val(val);
-    int count = 0;
-    for (int i = 0; i < 64; i++) {
-        if (bitset_val[63 - i] == 0 ) {
-            count++;
-        } else {
-            break;
-        }
-    }
-    return count;
-}
-
-int TrailingZeroBits(std::uint64_t val) {
-    std::bitset<64> bitset_val(val);
-    int count = 0;
-    for (int i = 0; i < 64; i++) {
-        if (bitset_val[i] == 0 ) {
-            count++;
-        } else {
-            break;
-        }
-    }
-    return count;
 }
 
 } // namespace compression

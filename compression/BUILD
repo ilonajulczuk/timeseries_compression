@@ -5,8 +5,8 @@ package(
 
 cc_library(
     name  = 'compression_lib',
-    srcs = ['compression.cc'],
-    hdrs = ['compression.h'],
+    srcs = ['compression.cc', 'helpers.cc'],
+    hdrs = ['compression.h', 'helpers.h', 'common.h'],
 )
 
 cc_binary(
