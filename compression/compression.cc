@@ -76,8 +76,10 @@ DataIterator::DataIterator(std::vector<std::uint8_t>* data, int byte_offset, int
  data_(data), byte_offset_(byte_offset), bit_offset_(bit_offset), current_size_(0) {
  }
 
-DataIterator& DataIterator::DataIterator::operator++()
-{
+DataIterator& DataIterator::DataIterator::operator++() {
+    if (byte_offset_ >= data_->size()) {
+        throw ParsingError("trying to read outside of data, most likely corrupted format");
+    }
     if (current_size_ == 0) {
         ReadPair();
     }
@@ -86,8 +88,10 @@ DataIterator& DataIterator::DataIterator::operator++()
 }
 
 DataIterator DataIterator::operator++(int) {
-    // TODO: stop if incrementing over the end.
     DataIterator tmp = *this;
+    if (byte_offset_ >= data_->size()) {
+        throw ParsingError("trying to read outside of data, most likely corrupted format");
+    }
     if (current_size_ == 0) {
         ReadPair();
     }
@@ -96,6 +100,9 @@ DataIterator DataIterator::operator++(int) {
 }
 
 std::pair<TSType, ValType>& DataIterator::operator*() {
+    if (byte_offset_ >= data_->size()) {
+        throw ParsingError("trying to read outside of data, most likely corrupted format");
+    }
     if (!current_size_) {
         ReadPair();
     }
