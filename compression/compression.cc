@@ -348,9 +348,23 @@ void EncodedDataBlock::AppendBits(int number_of_bits, std::uint64_t value) {
         initial_byte = data_.back();
         data_.pop_back();
     }
-    auto output_pair = BitAppend(data_end_offset_, number_of_bits, value, initial_byte);
-    data_.insert(data_.end(), output_pair.first.begin(), output_pair.first.end());
-    data_end_offset_ = output_pair.second;
+
+    int bit_offset = data_end_offset_;
+    std::uint8_t byte = initial_byte;
+    while (number_of_bits > 0) {
+        int shift = number_of_bits - 8 + bit_offset;
+        if (shift > 0) {
+            byte |= (value >> shift) & 0xFF;
+        } else {
+            byte |= (value << -shift) & 0xFF;
+        }
+        data_.push_back(byte);
+        number_of_bits -= (8 - bit_offset);
+        byte = 0;
+        bit_offset = 0;
+    }
+    bit_offset = (8 + number_of_bits) % 8;
+    data_end_offset_ = bit_offset;
 }
 
 

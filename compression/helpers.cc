@@ -59,7 +59,6 @@ int TrailingZeroBits(std::uint64_t val) {
     return count;
 }
 
-
 std::uint64_t TrimToMeaningfulBits(std::uint64_t value, int leading_zeros, int trailing_zeros) {
     return value >> trailing_zeros;
 }
