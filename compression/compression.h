@@ -140,7 +140,6 @@ public:
     void Append(TSType timestamp, ValType val);
 
     std::vector<std::pair<TSType, ValType>> Decode();
-    // Iterators to easily iterate over the data?
 
     void PrintBinData() {
         for (auto b: blocks_) {

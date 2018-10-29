@@ -9,7 +9,8 @@ namespace compression {
 
 const int kMaxTimeLengthOfBlockSecs = 2 * 60 * 60;
 
-std::map<int, unsigned int> kLenToSequenceTS = {
+// Some values appear more than once, so I use multimap.
+std::multimap<int, unsigned int> kLenToSequenceTS = {
     {1, 0b0},
     {2, 0b10},
     {3, 0b110},

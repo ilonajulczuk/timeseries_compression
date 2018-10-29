@@ -1,3 +1,5 @@
+#include <utility>
+#include <vector>
 #include "compression.h"
 #include "gtest/gtest.h"
 
@@ -109,20 +111,25 @@ TEST(ValEncoding, LeadingZeroes) {
   ASSERT_EQ(val, DoubleFromInt(as_int));
  }
 
-
  TEST(BlockIterator, IterateOverEncoder) {
   compression::Encoder encoder{};
-  encoder.Append(2 * 60 * 60 + 5, 6.666);
-
-  encoder.Append(2 * 60 * 60 + 11, 66.66);
-  encoder.Append(2 * 60 * 60 + 13, 8.66);
-  encoder.Append(2 * 60 * 60 + 313, 8.66);
-  encoder.Append(2 * 60 * 60 + 613, 7.21);
-  encoder.Append(2 * 60 * 60 + 713, 8.66);
-  encoder.Append(2 * 60 * 60 + 816, 8.66);
-  encoder.Append(2 * 60 * 60 + 913, 8.66);
+  // Generate vector of items.
+  // Add items to the encoder.
+  // Iterate on items from the encoder and compare if results are the same.
+  // TODO: add different variations of data
+  std::vector<std::pair<unsigned int, double>> in;
+  int N = 2000;
+  for (int i = 0; i < N; i++) {
+    in.push_back({2500 + i * 10, i});
+  }
+  for (auto pair : in) {
+    encoder.Append(pair.first, pair.second);
+  }
+  int i = 0;
   for (auto pair : encoder) {
-    std::cout << pair.first << ": v : " << pair.second << "\n";
+    ASSERT_EQ(pair.first, in[i].first);
+    ASSERT_EQ(pair.second, in[i].second);
+    i++;
   }
 
  }

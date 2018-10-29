@@ -25,3 +25,12 @@ cc_test(
         ':compression_lib',
          ],
 )
+
+cc_binary(
+    name = 'compression_benchmark',
+    srcs = ['compression_benchmark.cc'],
+    deps = [
+        '@benchmark//:benchmark_main',
+        ':compression_lib',
+         ],
+)

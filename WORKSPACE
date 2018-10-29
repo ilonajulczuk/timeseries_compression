@@ -9,3 +9,9 @@ new_http_archive(
     build_file = "gtest.BUILD",
     strip_prefix = "googletest-release-1.7.0",
 )
+
+git_repository(
+    name = "benchmark",
+    remote = "https://github.com/google/benchmark.git",
+    tag = "v1.4.1",
+)
