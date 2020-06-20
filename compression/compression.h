@@ -4,41 +4,66 @@
 #include <utility>
 #include <vector>
 #include <cinttypes>
-#include <stdexcept>
+#include "common.h"
+#include "helpers.h"
 
 namespace compression {
 
-class ParsingError : public std::logic_error {
-public:
-    ParsingError(const std::string& msg): std::logic_error(msg) {}
-};
-
-using TSType = std::uint64_t;
-using ValType = double;
-
 extern const int kMaxTimeLengthOfBlockSecs;
 
-std::pair<std::vector<std::uint8_t>, int> BitAppend(
-    int bit_offset, int number_of_bits, std::uint64_t value, std::uint8_t initial_byte);
+class EncodedDataBlock;
 
-
-void PrintBin(std::vector<std::uint8_t> data);
-void PrintBin(std::uint64_t data);
-std::uint64_t DoubleAsInt(ValType val);
 std::uint64_t ReadBits(int num_bits, unsigned int byte_offset, int bit_offset, std::vector<std::uint8_t>& data);
-ValType DoubleFromInt(std::uint64_t int_encoded);
 
-// TODO: figure out how to handle failures, either exceptions or status codes?
+class DataIterator {
 
+public:
+    // Iterator traits, previously from std::iterator.
+    using value_type = std::pair<TSType, ValType>;
+    using iterator_category = std::input_iterator_tag;
+    using difference_type = std::ptrdiff_t;
+    using pointer = std::pair<TSType, ValType>*;
+    using reference = std::pair<TSType, ValType>&;
 
-int LeadingZeroBits(std::uint64_t val);
-int TrailingZeroBits(std::uint64_t val);
+    DataIterator();
+    DataIterator(std::vector<std::uint8_t>* data);
+    DataIterator(std::vector<std::uint8_t>* data, int byte_offset, int bit_offset);
+    // Dereferencable.
+    reference operator*();
+
+    DataIterator& operator++();
+    DataIterator operator++(int);
+
+    // Equality / inequality.
+    bool operator==(const DataIterator& rhs);
+    bool operator!=(const DataIterator& rhs);
+
+private:
+    void UpdateOffsets();
+    std::vector<std::uint8_t>* data_;
+    unsigned int byte_offset_;
+    int bit_offset_;
+    TSType last_timestamp_;
+    ValType last_val_;
+    int last_delta_;
+    int last_xor_leading_zeros_;
+    int last_xor_meaningful_bits_;
+
+    int current_size_;
+    std::pair<TSType, ValType> current_pair_;
+
+    void ReadPair();
+};
+
 
 class EncodedDataBlock {
 
 public:
-
     EncodedDataBlock(TSType timestamp, ValType val);
+    using iterator = DataIterator;
+
+    iterator begin();
+    iterator end();
 
     bool WithinRange(TSType timestamp);
 
@@ -71,14 +96,50 @@ private:
 };
 
 
+class Encoder;
+
+class EncoderIterator {
+
+public:
+    // Iterator traits, previously from std::iterator.
+    using value_type = std::pair<TSType, ValType>;
+    using iterator_category = std::input_iterator_tag;
+    using difference_type = std::ptrdiff_t;
+    using pointer = std::pair<TSType, ValType>*;
+    using reference = std::pair<TSType, ValType>&;
+
+    EncoderIterator(std::vector<EncodedDataBlock*>* blocks, bool end = false);
+
+    // Dereferencable.
+    reference operator*();
+
+    EncoderIterator& operator++();
+    EncoderIterator operator++(int);
+
+    // Equality / inequality.
+    bool operator==(const EncoderIterator& rhs);
+    bool operator!=(const EncoderIterator& rhs);
+
+private:
+    // pos_ points at the current block position.
+    unsigned int pos_;
+    DataIterator current_block_it_;
+    DataIterator current_block_end_;
+
+    std::vector<EncodedDataBlock*>* blocks_;
+};
+
 class Encoder {
 
 public:
+    using iterator = EncoderIterator;
+
+    iterator begin();
+    iterator end();
 
     void Append(TSType timestamp, ValType val);
 
     std::vector<std::pair<TSType, ValType>> Decode();
-    // Iterators to easily iterate over the data?
 
     void PrintBinData() {
         for (auto b: blocks_) {
@@ -86,15 +147,12 @@ public:
         }
     }
 private:
+    std::vector<EncodedDataBlock*> blocks_;
     EncodedDataBlock* StartNewBlock(TSType timestamp, ValType val) {
         return new EncodedDataBlock(timestamp, val);
     }
 
-    // TODO: ownership of this.
-    std::vector<EncodedDataBlock*> blocks_;
 };
-
-
 
 }
 #endif

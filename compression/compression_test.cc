@@ -1,3 +1,5 @@
+#include <utility>
+#include <vector>
 #include "compression.h"
 #include "gtest/gtest.h"
 
@@ -24,6 +26,9 @@ TEST(CompressionTest, TestEndToEnd) {
 
   auto ts_data = encoder.Decode();
   EXPECT_EQ(8U, ts_data.size());
+  for (auto pair : ts_data) {
+    std::cout << pair.first << " " << pair.second << "\n";
+  }
   EXPECT_EQ(2 * 60 * 60 + 5U, ts_data[0].first);
   EXPECT_FLOAT_EQ(6.666, ts_data[0].second);
   EXPECT_EQ(2 * 60 * 60 + 11U, ts_data[1].first);
@@ -105,4 +110,28 @@ TEST(ValEncoding, LeadingZeroes) {
   auto as_int = DoubleAsInt(val);
   ASSERT_EQ(val, DoubleFromInt(as_int));
  }
-}
+
+ TEST(BlockIterator, IterateOverEncoder) {
+  compression::Encoder encoder{};
+  // Generate vector of items.
+  // Add items to the encoder.
+  // Iterate on items from the encoder and compare if results are the same.
+  // TODO: add different variations of data
+  std::vector<std::pair<unsigned int, double>> in;
+  int N = 2000;
+  for (int i = 0; i < N; i++) {
+    in.push_back({2500 + i * 10, i});
+  }
+  for (auto pair : in) {
+    encoder.Append(pair.first, pair.second);
+  }
+  int i = 0;
+  for (auto pair : encoder) {
+    ASSERT_EQ(pair.first, in[i].first);
+    ASSERT_EQ(pair.second, in[i].second);
+    i++;
+  }
+
+ }
+
+} // namespace compression

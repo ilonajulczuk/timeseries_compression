@@ -1,9 +1,7 @@
-
 #include <vector>
 #include <utility>
-#include <iostream>
 #include "compression.h"
-#include <bitset>
+
 #include <map>
 
 
@@ -11,7 +9,8 @@ namespace compression {
 
 const int kMaxTimeLengthOfBlockSecs = 2 * 60 * 60;
 
-std::map<int, unsigned int> kLenToSequenceTS = {
+// Some values appear more than once, so I use multimap.
+std::multimap<int, unsigned int> kLenToSequenceTS = {
     {1, 0b0},
     {2, 0b10},
     {3, 0b110},
@@ -33,44 +32,208 @@ std::map<int, int> kSequenceToNumBits = {
     {0b1111, 32}
 };
 
-
-std::uint64_t DoubleAsInt(ValType val) {
-    return *reinterpret_cast<std::uint64_t*>(&val);
-}
-
-ValType DoubleFromInt(std::uint64_t int_encoded) {
-    return *reinterpret_cast<ValType*>(&int_encoded);
-}
-
-// Helper function to print bit values.
-void PrintHex(std::vector<std::uint8_t> data) {
-    std::cout << "Values in hex:\n";
-    for (auto d: data) {
-        std::cout << std::hex << (int)d << "\n";
-    }
-    std::cout << "\n";
-}
-
-void PrintBin(std::vector<std::uint8_t> data) {
-    std::cout << "Values in binary:\n";
-    for (auto d: data) {
-        std::cout << std::bitset<8>(d) << "\n";
-    }
-    std::cout << "\n";
-}
-
-void PrintBin(std::uint64_t data) {
-    std::cout << "Values in binary:\n";
-    std::cout << std::bitset<64>(data) << "\n";
-}
-
 TSType AlignTS(TSType timestamp) {
     // 2h blocks aligned to epoch.
     return timestamp - (timestamp % (2 * 60 * 60));
 }
 
+DataIterator::DataIterator():
+ data_(nullptr), byte_offset_(0), bit_offset_(0), current_size_(0) {
+ }
+
+DataIterator::DataIterator(std::vector<std::uint8_t>* data):
+ data_(data), byte_offset_(0), bit_offset_(0), current_size_(0) {
+ }
+
+DataIterator::DataIterator(std::vector<std::uint8_t>* data, int byte_offset, int bit_offset):
+ data_(data), byte_offset_(byte_offset), bit_offset_(bit_offset), current_size_(0) {
+ }
+
+DataIterator& DataIterator::DataIterator::operator++() {
+    if (byte_offset_ >= data_->size()) {
+        throw ParsingError("trying to read outside of data, most likely corrupted format");
+    }
+    if (current_size_ == 0) {
+        ReadPair();
+    }
+    UpdateOffsets();
+    return *this;
+}
+
+DataIterator DataIterator::operator++(int) {
+    DataIterator tmp = *this;
+    if (byte_offset_ >= data_->size()) {
+        throw ParsingError("trying to read outside of data, most likely corrupted format");
+    }
+    if (current_size_ == 0) {
+        ReadPair();
+    }
+    UpdateOffsets();
+    return tmp;
+}
+
+std::pair<TSType, ValType>& DataIterator::operator*() {
+    if (byte_offset_ >= data_->size()) {
+        throw ParsingError("trying to read outside of data, most likely corrupted format");
+    }
+    if (!current_size_) {
+        ReadPair();
+    }
+    return current_pair_;
+}
+
+bool DataIterator::operator==(const DataIterator& rhs) {
+    return (byte_offset_ == rhs.byte_offset_) && (bit_offset_ == rhs.bit_offset_);
+}
+
+bool DataIterator::operator!=(const DataIterator& rhs) {
+    return !(*this == rhs);
+}
+
+void DataIterator::UpdateOffsets() {
+    bit_offset_ += current_size_;
+    byte_offset_ += (bit_offset_ - (bit_offset_ % 8)) / 8;
+    bit_offset_ %= 8;
+    current_size_ = 0;
+}
+
+void DataIterator::ReadPair() {
+    if (byte_offset_ == 0 && bit_offset_ == 0) {
+        TSType aligned_timestamp = ReadBits(64, 0, 0, *data_);
+        std::uint16_t delta = ReadBits(16, 8, 0, *data_);
+        ValType val = DoubleFromInt(ReadBits(64, 10, 0, *data_));
+
+        TSType timestamp = aligned_timestamp + delta;
+        last_timestamp_ = timestamp;
+        last_val_ = val;
+        last_val_ = val;
+        last_delta_ = delta;
+
+        current_size_ = 64 + 16 + 64;
+        current_pair_ = {timestamp, val};
+        return;
+    }
+
+    TSType timestamp = 0;
+    ValType val = 0;
+    int delta = 0;
+    unsigned int byte_offset = byte_offset_;
+    int bit_offset = bit_offset_;
+
+    bool matched = false;
+    for (auto p: kLenToSequenceTS) {
+        auto len_of_sequence = p.first;
+        auto sequence = p.second;
+        auto number = ReadBits(len_of_sequence, byte_offset, bit_offset, *data_);
+        if (number == sequence) {
+            matched = true;
+            bit_offset += len_of_sequence;
+            if (bit_offset > 7) {
+                bit_offset -= 8;
+                byte_offset += 1;
+            }
+
+            int num_bits = kSequenceToNumBits[sequence];
+            std::int64_t encoded_delta_of_delta = ReadBits(num_bits, byte_offset, bit_offset, *data_);
+            bit_offset += num_bits;
+            byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+            bit_offset %= 8;
+            if ((encoded_delta_of_delta & (0b1 << (num_bits - 1))) > 0) {
+                encoded_delta_of_delta |= (0xFFFFFFFFFFFFFFFF << num_bits);
+            }
+            delta = last_delta_ + encoded_delta_of_delta;
+            timestamp = last_timestamp_ + delta;
+            last_delta_ = delta;
+            last_timestamp_ = timestamp;
+            break;
+        }
+    }
+    if (!matched) {
+        throw ParsingError("timestamp couldn't be decoded, sequence not matched");
+    }
+    matched = false;
+    unsigned int number = 0;
+    for (auto p: kLenToSequenceVal) {
+        auto len_of_sequence = p.first;
+        auto sequence = p.second;
+        number = ReadBits(len_of_sequence, byte_offset, bit_offset, *data_);
+        if (number == sequence) {
+            bit_offset += len_of_sequence;
+            if (bit_offset > 7) {
+                bit_offset -= 8;
+                byte_offset += 1;
+            }
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) {
+        throw ParsingError("value couldn't be decoded, sequence not matched");
+    }
+    switch (number) {
+        case 0:
+            val = last_val_;
+            break;
+        case 2: {
+            auto xored_shifted = ReadBits(last_xor_meaningful_bits_, byte_offset, bit_offset, *data_);
+            bit_offset += last_xor_meaningful_bits_;
+            byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+            bit_offset %= 8;
+            auto xored = xored_shifted << (64 - last_xor_meaningful_bits_ - last_xor_leading_zeros_);
+            val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
+            break;
+        }
+        case 3: {
+            int num_bits = 6;
+            auto leading_zeros = ReadBits(num_bits, byte_offset, bit_offset, *data_);
+            bit_offset += num_bits;
+            byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+            bit_offset %= 8;
+
+            num_bits = 6;
+            auto meaningful_bits = ReadBits(num_bits, byte_offset, bit_offset, *data_);
+            bit_offset += num_bits;
+            byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+            bit_offset %= 8;
+
+            num_bits = meaningful_bits;
+            std::uint64_t xored_shifted = ReadBits(num_bits, byte_offset, bit_offset, *data_);
+            bit_offset += num_bits;
+            byte_offset += (bit_offset - (bit_offset % 8)) / 8;
+            bit_offset %= 8;
+
+            std::uint64_t xored = xored_shifted << (64 - meaningful_bits - leading_zeros);
+
+            last_xor_leading_zeros_ = leading_zeros;
+            last_xor_meaningful_bits_ = meaningful_bits;
+            val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
+            break;
+        }
+        default:
+            throw ParsingError("unknown sequence number while decoding the value " +
+                std::to_string(number));
+    }
+    last_val_ = val;
+    current_size_ = (byte_offset - byte_offset_) * 8 + bit_offset - bit_offset_;
+    current_pair_ = {timestamp, val};
+}
+
+
+EncodedDataBlock::iterator EncodedDataBlock::begin() {
+    return iterator(&data_);
+}
+
+EncodedDataBlock::iterator EncodedDataBlock::end() {
+    int end_byte_offset = data_end_offset_ ? data_.size() -1: data_.size();
+    return iterator(&data_, end_byte_offset, data_end_offset_);
+}
+
 EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
- last_ts_(timestamp), last_val_(val), last_xor_leading_zeros_(-1), last_xor_meaningful_bits_(-1), data_end_offset_(0)  {
+    last_ts_(timestamp),
+    last_val_(val),
+    last_xor_leading_zeros_(-1), 
+    last_xor_meaningful_bits_(-1),
+    data_end_offset_(0) {
     // Align timestamp to the epoch and figure out what the delta is.
     auto aligned_ts = AlignTS(timestamp);
     std::uint16_t delta = timestamp - aligned_ts;
@@ -82,7 +245,6 @@ EncodedDataBlock::EncodedDataBlock(TSType timestamp, ValType val):
     AppendBits(16, delta);
     AppendBits(64, DoubleAsInt(val));
 }
-
 
 std::uint8_t TailMask(int tail_size) {
     return 0xFF >> (8 - tail_size);
@@ -117,142 +279,9 @@ std::uint64_t EncodedDataBlock::ReadBits(int num_bits, unsigned int byte_offset,
 }
 
 std::vector<std::pair<TSType, ValType>> EncodedDataBlock::Decode() {
-    TSType aligned_timestamp = ReadBits(64, 0, 0);
-    std::uint16_t delta = ReadBits(16, 8, 0);
-    ValType val = DoubleFromInt(ReadBits(64, 10, 0));
-
-    TSType last_timestamp = aligned_timestamp + delta;
-    std::vector<std::pair<TSType, ValType>> unpacked{{last_timestamp, val}};
-    last_val_ = val;
-    int last_delta = delta;
-
-    TSType timestamp = 0;
-    unsigned int byte_offset = 8 + 2 + 8;
-    int bit_offset = 0;
-
-    while (byte_offset < data_.size()) {
-        if ((byte_offset == data_.size() - 1) && bit_offset >= data_end_offset_) {
-            break;
-        }
-        bool matched = false;
-        for (auto p: kLenToSequenceTS) {
-            auto len_of_sequence = p.first;
-            auto sequence = p.second;
-            auto number = ReadBits(len_of_sequence, byte_offset, bit_offset);
-            if (number == sequence) {
-                matched = true;
-                bit_offset += len_of_sequence;
-                if (bit_offset > 7) {
-                    bit_offset -= 8;
-                    byte_offset += 1;
-                }
-
-                int num_bits = kSequenceToNumBits[sequence];
-                std::int64_t encoded_delta_of_delta = ReadBits(num_bits, byte_offset, bit_offset);
-                bit_offset += num_bits;
-                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                bit_offset %= 8;
-                if ((encoded_delta_of_delta & (0b1 << (num_bits - 1))) > 0) {
-                    encoded_delta_of_delta |= (0xFFFFFFFFFFFFFFFF << num_bits);
-                }
-                delta = last_delta + encoded_delta_of_delta;
-                timestamp = last_timestamp + delta;
-                last_delta = delta;
-                last_timestamp = timestamp;
-                break;
-            }
-        }
-        if (!matched) {
-            throw ParsingError("timestamp couldn't be decoded, sequence not matched");
-        }
-        matched = false;
-        unsigned int number = 0;
-        for (auto p: kLenToSequenceVal) {
-            auto len_of_sequence = p.first;
-            auto sequence = p.second;
-            number = ReadBits(len_of_sequence, byte_offset, bit_offset);
-            if (number == sequence) {
-                bit_offset += len_of_sequence;
-                if (bit_offset > 7) {
-                    bit_offset -= 8;
-                    byte_offset += 1;
-                }
-                matched = true;
-                break;
-            }
-        }
-        if (!matched) {
-            throw ParsingError("value couldn't be decoded, sequence not matched");
-        }
-        switch (number) {
-            case 0:
-                val = last_val_;
-                break;
-            case 2: {
-                auto xored_shifted = ReadBits(last_xor_meaningful_bits_, byte_offset, bit_offset);
-                bit_offset += last_xor_meaningful_bits_;
-                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                bit_offset %= 8;
-                auto xored = xored_shifted << (64 - last_xor_meaningful_bits_ - last_xor_leading_zeros_);
-                val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
-                break;
-            }
-            case 3: {
-                int num_bits = 6;
-                auto leading_zeros = ReadBits(num_bits, byte_offset, bit_offset);
-                bit_offset += num_bits;
-                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                bit_offset %= 8;
-
-                num_bits = 6;
-                auto meaningful_bits = ReadBits(num_bits, byte_offset, bit_offset);
-                bit_offset += num_bits;
-                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                bit_offset %= 8;
-
-                num_bits = meaningful_bits;
-                std::uint64_t xored_shifted = ReadBits(num_bits, byte_offset, bit_offset);
-                bit_offset += num_bits;
-                byte_offset += (bit_offset - (bit_offset % 8)) / 8;
-                bit_offset %= 8;
-
-                std::uint64_t xored = xored_shifted << (64 - meaningful_bits - leading_zeros);
-
-                last_xor_leading_zeros_ = leading_zeros;
-                last_xor_meaningful_bits_ = meaningful_bits;
-                val = DoubleFromInt(DoubleAsInt(last_val_) ^ xored);
-                break;
-            }
-            default:
-                throw ParsingError("unknown sequence number while decoding the value " +
-                 std::to_string(number));
-        }
-        last_val_ = val;
-        unpacked.push_back({timestamp, val});
-    }
-
-    return unpacked;
-}
-
-void Encoder::Append(TSType timestamp, ValType val) {
-    if (!blocks_.empty()) {
-        auto last_block = blocks_.back();
-        if (last_block->WithinRange(timestamp)) {
-            last_block->Append(timestamp, val);
-            return;
-        }
-    }
-    auto block = StartNewBlock(timestamp, val);
-    blocks_.push_back(block);
-}
-
-std::vector<std::pair<TSType, ValType>> Encoder::Decode() {
-    std::vector<std::pair<TSType, ValType>> all_ts;
-    for(auto block : blocks_) {
-        auto block_ts = block->Decode();
-        all_ts.insert(all_ts.end(), block_ts.begin(), block_ts.end());
-    }
-    return all_ts;
+    std::vector<std::pair<TSType, ValType>> output;
+    std::copy(begin(), end(), std::back_inserter(output));
+    return output;
 }
 
 bool EncodedDataBlock::WithinRange(TSType timestamp) {
@@ -319,14 +348,25 @@ void EncodedDataBlock::AppendBits(int number_of_bits, std::uint64_t value) {
         initial_byte = data_.back();
         data_.pop_back();
     }
-    auto output_pair = BitAppend(data_end_offset_, number_of_bits, value, initial_byte);
-    data_.insert(data_.end(), output_pair.first.begin(), output_pair.first.end());
-    data_end_offset_ = output_pair.second;
+
+    int bit_offset = data_end_offset_;
+    std::uint8_t byte = initial_byte;
+    while (number_of_bits > 0) {
+        int shift = number_of_bits - 8 + bit_offset;
+        if (shift > 0) {
+            byte |= (value >> shift) & 0xFF;
+        } else {
+            byte |= (value << -shift) & 0xFF;
+        }
+        data_.push_back(byte);
+        number_of_bits -= (8 - bit_offset);
+        byte = 0;
+        bit_offset = 0;
+    }
+    bit_offset = (8 + number_of_bits) % 8;
+    data_end_offset_ = bit_offset;
 }
 
-std::uint64_t TrimToMeaningfulBits(std::uint64_t value, int leading_zeros, int trailing_zeros) {
-    return value >> trailing_zeros;
-}
 
 void EncodedDataBlock::EncodeVal(ValType val) {
     std::uint64_t xored = DoubleAsInt(val) ^ DoubleAsInt(last_val_);
@@ -361,30 +401,85 @@ void EncodedDataBlock::Append(TSType timestamp, ValType val) {
     EncodeVal(val);
 }
 
-int LeadingZeroBits(std::uint64_t val) {
-    std::bitset<64> bitset_val(val);
-    int count = 0;
-    for (int i = 0; i < 64; i++) {
-        if (bitset_val[63 - i] == 0 ) {
-            count++;
-        } else {
-            break;
+
+void Encoder::Append(TSType timestamp, ValType val) {
+    if (!blocks_.empty()) {
+        auto last_block = blocks_.back();
+        if (last_block->WithinRange(timestamp)) {
+            last_block->Append(timestamp, val);
+            return;
         }
     }
-    return count;
+    auto block = StartNewBlock(timestamp, val);
+    blocks_.push_back(block);
 }
 
-int TrailingZeroBits(std::uint64_t val) {
-    std::bitset<64> bitset_val(val);
-    int count = 0;
-    for (int i = 0; i < 64; i++) {
-        if (bitset_val[i] == 0 ) {
-            count++;
-        } else {
-            break;
+std::vector<std::pair<TSType, ValType>> Encoder::Decode() {
+    std::vector<std::pair<TSType, ValType>> all_ts;
+    for(auto block : blocks_) {
+        auto block_ts = block->Decode();
+        all_ts.insert(all_ts.end(), block_ts.begin(), block_ts.end());
+    }
+    return all_ts;
+}
+
+EncoderIterator Encoder::begin() {
+    return iterator(&blocks_);
+}
+
+EncoderIterator Encoder::end() {
+    return iterator(&blocks_, true);
+}
+
+EncoderIterator::EncoderIterator(std::vector<EncodedDataBlock*>* blocks, bool end) :
+blocks_(blocks) {
+    if (end) {
+        current_block_it_= (*blocks_)[blocks->size() - 1]->end();
+        current_block_end_ = current_block_it_;
+        pos_ = blocks_->size();
+    } else {
+        pos_ = 0;
+        current_block_it_ = (*blocks_)[0]->begin();
+        current_block_end_ = (*blocks_)[0]->end();
+    }
+}
+
+
+EncoderIterator& EncoderIterator::EncoderIterator::operator++() {
+    current_block_it_++;
+    if (current_block_it_ == current_block_end_) {
+        pos_++;
+        if (pos_ < blocks_->size()) {
+            current_block_it_ = (*blocks_)[pos_]->begin();
+            current_block_end_ = (*blocks_)[pos_]->end();
         }
     }
-    return count;
+    return *this;
+}
+
+EncoderIterator EncoderIterator::operator++(int) {
+    EncoderIterator tmp = *this;
+    current_block_it_++;
+    if (current_block_it_ == current_block_end_) {
+        pos_++;
+        if (pos_ < blocks_->size()) {
+            current_block_it_ = (*blocks_)[pos_]->begin();
+            current_block_end_ = (*blocks_)[pos_]->end();
+        }
+    }
+    return tmp;
+}
+
+std::pair<TSType, ValType>& EncoderIterator::operator*() {
+    return *current_block_it_;
+}
+
+bool EncoderIterator::operator==(const EncoderIterator& rhs) {
+    return (blocks_ == rhs.blocks_) && (current_block_it_ == rhs.current_block_it_) && (pos_ == rhs.pos_);
+}
+
+bool EncoderIterator::operator!=(const EncoderIterator& rhs) {
+    return !(*this == rhs);
 }
 
 } // namespace compression
